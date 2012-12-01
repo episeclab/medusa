@@ -28,7 +28,7 @@ ElfLoader::ElfLoader(Database& rDatabase)
   m_IsValid = true;
 }
 
-char  const*  ElfLoader::GetName(void)
+char const* ElfLoader::GetName(void)
 {
   switch (GetWordSize())
   {
@@ -38,7 +38,7 @@ char  const*  ElfLoader::GetName(void)
   }
 }
 
-void          ElfLoader::Map(void)
+void ElfLoader::Map(void)
 {
   switch (GetWordSize())
   {
@@ -48,7 +48,7 @@ void          ElfLoader::Map(void)
   }
 }
 
-void          ElfLoader::Translate(Address const& rVirtAddr, TOffset& rOffset)
+void ElfLoader::Translate(Address const& rVirtAddr, TOffset& rOffset)
 {
 }
 
@@ -62,7 +62,7 @@ Address ElfLoader::GetEntryPoint(void)
   }
 }
 
-EEndianness          ElfLoader::GetEndianness(void)
+EEndianness ElfLoader::GetEndianness(void)
 {
   switch (m_Ident[EI_DATA])
   {
@@ -72,34 +72,28 @@ EEndianness          ElfLoader::GetEndianness(void)
   }
 }
 
-Architecture::SPtr ElfLoader::GetMainArchitecture(Architecture::VectorSPtr& rArchitectures)
+Architecture::SharedPtr ElfLoader::GetMainArchitecture(Architecture::VectorSharedPtr const& rArchitectures)
 {
   std::string ArchName = "";
 
   switch (m_Machine)
   {
-  case EM_386:
-  case EM_X86_64:
-    ArchName = "Intel x86";
-    break;
-
-  case EM_AVR:
-    ArchName = "Atmel AVR 8-bit";
-    break;
-
-  default: break;
+  case EM_386: case EM_X86_64: ArchName = "Intel x86";       break;
+  case EM_ARM:                 ArchName = "ARM";             break;
+  case EM_AVR:                 ArchName = "Atmel AVR 8-bit"; break;
+  default:                                                   break;
   }
 
   if (ArchName.empty())
-    return Architecture::SPtr();
+    return Architecture::SharedPtr();
 
   if (rArchitectures.size() > 0)
-    BOOST_FOREACH(Architecture::SPtr pArchitecture, rArchitectures)
+    BOOST_FOREACH(Architecture::SharedPtr pArchitecture, rArchitectures)
     {
       if (pArchitecture->GetName() == ArchName)
         return pArchitecture;
     }
-  return Architecture::SPtr();
+  return Architecture::SharedPtr();
 }
 
 void ElfLoader::Configure(Configuration& rCfg)

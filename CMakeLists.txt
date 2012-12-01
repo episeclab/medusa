@@ -9,12 +9,12 @@ project(Medusa)
 
 # medusa version
 set(VERSION_MAJOR 0)
-set(VERSION_MINOR 1)
+set(VERSION_MINOR 2)
 set(VERSION_PATCH 0)
 
 # We need boost
 set(Boost_USE_STATIC_LIBS OFF) # We want to link boost dynamically
-if (WIN32)
+if (MSVC)
   add_definitions(-DBOOST_ALL_DYN_LINK)
 endif()
 find_package(Boost 1.46 COMPONENTS system filesystem thread date_time REQUIRED)
@@ -42,24 +42,17 @@ link_directories(
   ${Boost_LIBRARY_DIRS}
   )
 
-if (MSVC)
-  message("INFO: Microsoft compiler is used. Disabling native wchar_t type")
-  add_definitions(/Zc:wchar_t-)
+# Found it in CMakeLists.txt from keepassx project
+if("${CMAKE_CXX_COMPILER}" MATCHES "clang(\\+\\+)?$" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+  set(CMAKE_COMPILER_IS_CLANGXX 1)
+endif()
 
-  add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
-  add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
-  add_definitions(-D_SCL_SECURE_NO_DEPRECATE)
+if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_CLANGXX)
+  add_definitions("-std=c++11")
 endif()
 
 # add source directory
 add_subdirectory(src)
-
-# add python binding directory
-find_package(Boost 1.46 COMPONENTS python)
-if (Boost_PYTHON_FOUND)
-  message("INFO: Package boost.python found, pydusa will be compiled")
-  add_subdirectory(python)
-endif()
 
 # add packaging directory
 add_subdirectory(package)

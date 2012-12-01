@@ -1,7 +1,7 @@
 #include "medusa/database.hpp"
 #include "medusa/medusa.hpp"
-
 #include "medusa/value.hpp"
+#include "medusa/log.hpp"
 
 #include <boost/foreach.hpp>
 
@@ -20,7 +20,7 @@ Database::~Database(void)
 
 MemoryArea* Database::GetMemoryArea(Address const& rAddr)
 {
-  boost::lock_guard<MutexType> Lock(m_Mutex);
+  boost::lock_guard<MutexType> Lock(m_MemoryAreaMutex);
   for (TMemoryAreas::iterator It = m_MemoryAreas.begin(); It != m_MemoryAreas.end(); ++It)
     if ((*It)->IsPresent(rAddr))
       return *It;
@@ -30,7 +30,7 @@ MemoryArea* Database::GetMemoryArea(Address const& rAddr)
 
 MemoryArea const* Database::GetMemoryArea(Address const& rAddr) const
 {
-  boost::lock_guard<MutexType> Lock(m_Mutex);
+  boost::lock_guard<MutexType> Lock(m_MemoryAreaMutex);
   for (TMemoryAreas::const_iterator It = m_MemoryAreas.begin(); It != m_MemoryAreas.end(); ++It)
     if ((*It)->IsPresent(rAddr))
       return *It;
@@ -52,6 +52,7 @@ void Database::SetLabelToAddress(Address const& rAddr, Label const& rLabel)
 {
   TLabelMap::left_iterator Iter = m_LabelMap.left.find(rAddr);
   m_LabelMap.left.replace_data(Iter, rLabel);
+  m_EventQueue.Push(EventHandler::LabelAdded(rLabel));
 }
 
 Address Database::GetAddressFromLabelName(std::string const& rLabelName) const
@@ -67,35 +68,88 @@ Address Database::GetAddressFromLabelName(std::string const& rLabelName) const
 void Database::AddLabel(Address const& rAddr, Label const& rLabel)
 {
   m_LabelMap.insert(TLabelMap::value_type(rAddr, rLabel));
+  m_View.AddLineInformation(View::LineInformation(View::LineInformation::EmptyLineType, rAddr));
+  m_View.AddLineInformation(View::LineInformation(View::LineInformation::LabelLineType, rAddr));
+  m_EventQueue.Push(EventHandler::LabelAdded(rLabel));
 }
 
 bool Database::ChangeValueSize(Address const& rValueAddr, u8 NewValueSize, bool Force)
 {
   Cell* pOldCell = RetrieveCell(rValueAddr);
 
-  if (pOldCell == NULL)                         return false;
-  if (pOldCell->GetType() != Cell::ValueType)   return false;
+  NewValueSize /= 8;
+
+  if (pOldCell == NULL)
+    return false;
+
   size_t OldCellLength = pOldCell->GetLength();
-  if (OldCellLength == NewValueSize)            return true;
+  if (pOldCell->GetType() == CellData::ValueType && OldCellLength == NewValueSize)
+    return true;
 
   u32 ValueType = (static_cast<Value*>(pOldCell)->GetValueType() & VT_MASK);
 
   switch (NewValueSize)
   {
-  case 8:  ValueType |= VS_8BIT;  break;
-  case 16: ValueType |= VS_16BIT; break;
-  case 32: ValueType |= VS_32BIT; break;
-  case 64: ValueType |= VS_64BIT; break;
+  case 1: ValueType |= VS_8BIT;  break;
+  case 2: ValueType |= VS_16BIT; break;
+  case 4: ValueType |= VS_32BIT; break;
+  case 8: ValueType |= VS_64BIT; break;
   default: return false;
   }
 
   Cell* pNewCell = new Value(ValueType);
 
-  return InsertCell(rValueAddr, pNewCell, Force);
+  if (NewValueSize > OldCellLength)
+    return InsertCell(rValueAddr, pNewCell, Force);
+
+  if (InsertCell(rValueAddr, pNewCell, Force) == false)
+    return false;
+
+  for (u32 i = NewValueSize; i < OldCellLength; ++i)
+    if (InsertCell(rValueAddr + i, new Value(ValueType | VS_8BIT), Force) == false)
+      return false;
+
+  return true;
+}
+
+bool Database::MakeString(Address const& rAddr)
+{
+  try
+  {
+    s8 CurChar;
+    TOffset StrOff;
+    std::string StrData = "";
+    auto pMemArea       = GetMemoryArea(rAddr);
+    auto rCurBinStrm    = pMemArea->GetBinaryStream();
+
+    if (pMemArea->Convert(rAddr.GetOffset(), StrOff) == false)
+      return false;
+
+    for (;;)
+    {
+      rCurBinStrm.Read(StrOff, CurChar);
+      if (CurChar == '\0') break;
+
+      StrData += CurChar;
+      ++StrOff;
+    }
+
+    if (StrData.length() == 0) return false;
+
+    auto pStr = new String(StrData);
+    InsertCell(rAddr, pStr, true);
+  }
+  catch (Exception const&)
+  {
+    return false;
+  }
+
+  return true;
 }
 
 Cell* Database::RetrieveCell(Address const& rAddr)
 {
+  boost::mutex::scoped_lock Lock(m_CellMutex);
   MemoryArea* pMemArea = GetMemoryArea(rAddr);
   if (pMemArea == NULL)
     return NULL;
@@ -105,6 +159,7 @@ Cell* Database::RetrieveCell(Address const& rAddr)
 
 Cell const* Database::RetrieveCell(Address const& rAddr) const
 {
+  boost::mutex::scoped_lock Lock(m_CellMutex);
   MemoryArea const* pMemArea = GetMemoryArea(rAddr);
   if (pMemArea == NULL)
     return NULL;
@@ -118,13 +173,30 @@ bool Database::InsertCell(Address const& rAddr, Cell* pCell, bool Force, bool Sa
   if (pMemArea == NULL)
     return false;
 
-  Address::List ModifiedAddresses;
-  if (!pMemArea->InsertCell(rAddr.GetOffset(), pCell, ModifiedAddresses, Force, Safe))
+  Address::List ErasedAddresses;
+  if (!pMemArea->InsertCell(rAddr.GetOffset(), pCell, ErasedAddresses, Force, Safe))
     return false;
 
-  m_EventQueue.Push(EventHandler::UpdatedCell(ModifiedAddresses));
+  for (auto itAddr = std::begin(ErasedAddresses); itAddr != std::end(ErasedAddresses); ++itAddr)
+    if (RetrieveCell(*itAddr) == nullptr)
+    {
+      m_View.EraseLineInformation(View::LineInformation(View::LineInformation::CellLineType, *itAddr));
+      //Log::Write("view") << "Remove " << itAddr->ToString() << LogEnd;
+    }
+    else
+    {
+      m_View.AddLineInformation(View::LineInformation(View::LineInformation::CellLineType, *itAddr));
+      //Log::Write("view") << "Add " << itAddr->ToString() << LogEnd;
+    }
+
+  m_EventQueue.Push(EventHandler::DatabaseUpdated());
 
   return true;
+}
+
+void Database::UpdateCell(Address const& rAddr, Cell* pCell)
+{
+  m_EventQueue.Push(EventHandler::DatabaseUpdated());
 }
 
 MultiCell* Database::RetrieveMultiCell(Address const& rAddr)
@@ -158,6 +230,7 @@ bool Database::InsertMultiCell(Address const& rAddr, MultiCell* pMultiCell, bool
     return false;
 
   m_MultiCells[rAddr] = pMultiCell;
+  m_View.UpdateLineInformation(View::LineInformation(View::LineInformation::MultiCellLineType, rAddr));
   return true;
 }
 
@@ -186,7 +259,7 @@ void Database::StartsEventHandling(EventHandler* pEvtHdl)
 
 void Database::StopsEventHandling(void)
 {
-  m_EventQueue.Push(EventHandler::Quit());
+  m_EventQueue.Quit();
   m_Thread.join();
 }
 
@@ -197,7 +270,7 @@ void Database::ProcessEventQueue(EventHandler* pEvtHdl)
 
 void Database::RemoveAll(void)
 {
-  boost::lock_guard<MutexType> Lock(m_Mutex);
+  boost::lock_guard<MutexType> Lock(m_CellMutex);
   for (TMemoryAreas::iterator It = m_MemoryAreas.begin(); It != m_MemoryAreas.end(); ++It)
     delete *It;
   m_MemoryAreas.erase(m_MemoryAreas.begin(), m_MemoryAreas.end());
@@ -205,6 +278,21 @@ void Database::RemoveAll(void)
   m_MultiCells.erase(m_MultiCells.begin(), m_MultiCells.end());
   m_LabelMap.erase(m_LabelMap.begin(), m_LabelMap.end());
   m_XRefs.EraseAll();
+  m_View.EraseAll();
+}
+
+void Database::AddMemoryArea(MemoryArea* pMemoryArea)
+{
+  m_MemoryAreas.push_back(pMemoryArea);
+  m_View.AddLineInformation(View::LineInformation(View::LineInformation::MemoryAreaLineType, pMemoryArea->GetVirtualBase()));
+
+  for (auto itCell = pMemoryArea->Begin(); itCell != pMemoryArea->End(); ++itCell)
+  {
+    if (itCell->second == nullptr) continue;
+    medusa::Address CurAddr(itCell->first);
+    pMemoryArea->FormatAddress(CurAddr);
+    m_View.UpdateLineInformation(View::LineInformation(View::LineInformation::CellLineType, CurAddr));
+  }
 }
 
 bool Database::IsPresent(Address const& Addr) const
@@ -230,46 +318,6 @@ bool Database::Write(Address const& rAddress, void const* pBuffer, u32 Size)
   if (pMemoryArea == NULL)
     return false;
   return pMemoryArea->Write(rAddress.GetOffset(), pBuffer, Size);
-}
-
-void Database::Load(SerializeEntity::SPtr spSrlzEtt)
-{
-  if (spSrlzEtt->GetName() != "db")
-    throw Exception(L"Database is corrupted (db is missing)");
-
-  for (SerializeEntity::SPtrList::const_iterator It = spSrlzEtt->BeginSubEntities();
-    It != spSrlzEtt->EndSubEntities(); ++It)
-  {
-    MemoryArea* pMemArea = NULL;
-
-    if ((*It)->GetName() == "pma")
-      pMemArea = new PhysicalMemoryArea;
-    else if ((*It)->GetName() == "mma")
-      pMemArea = new MappedMemoryArea;
-    else if ((*It)->GetName() == "vma")
-      pMemArea = new VirtualMemoryArea;
-    else
-      throw Exception(L"Database is corrupted (unknown memory area type)");
-
-    pMemArea->Load(*It);
-    m_MemoryAreas.push_back(pMemArea);
-  }
-}
-
-SerializeEntity::SPtr Database::Save(void)
-{
-  SerializeEntity::SPtr spDatabase(new SerializeEntity("db"));
-
-  for (TMemoryAreas::const_iterator It = m_MemoryAreas.begin();
-    It != m_MemoryAreas.end(); ++It)
-  {
-    SerializeEntity::SPtr spMemArea = (*It)->Save();
-
-    if (!spMemArea) throw Exception(L"Error while saving database");
-    spDatabase->AddSubEntity(spMemArea);
-  }
-
-  return spDatabase;
 }
 
 MEDUSA_NAMESPACE_END

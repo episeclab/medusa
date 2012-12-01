@@ -8,13 +8,13 @@
 #include "medusa/architecture.hpp"
 #include "medusa/loader.hpp"
 #include "medusa/database.hpp"
-#include "medusa/serialize.hpp"
-#include "medusa/disassembler.hpp"
+#include "medusa/analyzer.hpp"
 
 #include <vector>
 #include <iostream>
 #include <iomanip>
 
+#include <boost/thread/mutex.hpp>
 #include <boost/shared_ptr.hpp>
 
 #ifdef _MSC_VER
@@ -32,51 +32,80 @@ public:
                                  ~Medusa(void);
 
                                   /*! This method opens a file for being disassembled.
-                                   * It returns nothing but could throws excption @see Exception
+                                   * It returns nothing but could throws exception @see Exception
                                    * \param rFilePath is the path to the file.
                                    */
   void                            Open(std::wstring const& rFilePath);
 
+                                  //! This method returns true if a file is opened, otherwise it returns false.
+  bool                            IsOpened(void) const;
+
                                   //! This method closes the current disassembled file and cleans all resources.
   void                            Close(void);
 
-  void                            Load(Serialize& rSrlz);
-  void                            Save(Serialize& rSrlz);
-
                                   //! This method returns available architectures. @see Architecture
-  Architecture::VectorSPtr&       GetArchitectures(void) { return m_Architectures; }
+  Architecture::VectorSharedPtr&  GetAvailableArchitectures(void) { return m_AvailableArchitectures; }
                                   //! This method returns available architectures. @see Architecture
-  Architecture::VectorSPtr const& GetArchitectures(void) const { return m_Architectures; }
+  Architecture::VectorSharedPtr const& GetAvailableArchitectures(void) const { return m_AvailableArchitectures; }
                                   //! This method returns available loaders. @see Loader
-  Loader::VectorSPtr const&       GetSupportedLoaders(void) const { return m_Loaders; }
-                                  //! This methods returns available serializers. @see Serialize
-  Serialize::VectorSPtr&          GetSerializes(void) { return m_Serializes; }
+  Loader::VectorSharedPtr const&  GetSupportedLoaders(void) const { return m_Loaders; }
                                   //! This methods loads all modules.
   void                            LoadModules(std::wstring const& rModulesPath);
 
-                                  /*! This method starts the disassembling.
-                                   * \param pLoader is the selected Loader.
-                                   * \param pArch is the selected Architecture.
+  bool                            RegisterArchitecture(Architecture::SharedPtr spArch);
+
+  bool                            UnregisterArchitecture(Architecture::SharedPtr spArch);
+
+  void                            Start(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch);
+  void                            StartAsync(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch);
+
+  void                            Disassemble(Architecture::SharedPtr spArch, Address const& rAddr);
+  void                            DisassembleAsync(Address const& rAddr);
+  void                            DisassembleAsync(Architecture::SharedPtr spArch, Address const& rAddr);
+
+                                  /*! This method starts the analyze.
+                                   * \param spArch is the selected Architecture.
+                                   * \param rAddr is the start address of disassembling.
                                    */
-  void                            Disassemble(Loader::SPtr pLoader, Architecture::SPtr pArch);
+  void                            Analyze(Architecture::SharedPtr spArch, Address const& rAddr);
+  void                            AnalyzeAsync(Address const& rAddr);
+  void                            AnalyzeAsync(Architecture::SharedPtr spArch, Address const& rAddr);
+
+                                  /*! This method builds a control flow graph from an address.
+                                   * \param rAddr is the start address.
+                                   * \param rCfg is the filled control flow graph.
+                                   */
+  bool                            BuildControlFlowGraph(Address const& rAddr, ControlFlowGraph& rCfg);
+
+  Cell*                           GetCell(Address const& rAddr);
+  Cell const*                     GetCell(Address const& rAddr) const;
+
+  MultiCell*                      GetMultiCell(Address const& rAddr);
+  MultiCell const*                GetMultiCell(Address const& rAddr) const;
 
                                   //! This method returns the current database.
-  Database&                       GetDatabase(void) { return m_Database; }
+  Database&                       GetDatabase(void)       { return m_Database; }
   Database const&                 GetDatabase(void) const { return m_Database; }
 
                                   //! This method makes a fully filled Address if possible. @see Address
-  Address::SPtr                   MakeAddress(TOffset Offset);
-  Address::SPtr                   MakeAddress(TBase Base, TOffset Offset);
-  Address::SPtr                   MakeAddress(Loader::SPtr pLoader, Architecture::SPtr pArch, TOffset Offset);
-  Address::SPtr                   MakeAddress(Loader::SPtr pLoader, Architecture::SPtr pArch, TBase Base, TOffset Offset);
+  Address                         MakeAddress(TOffset Offset);
+  Address                         MakeAddress(TBase Base, TOffset Offset);
+  Address                         MakeAddress(Loader::SharedPtr pLoader, Architecture::SharedPtr pArch, TOffset Offset);
+  Address                         MakeAddress(Loader::SharedPtr pLoader, Architecture::SharedPtr pArch, TBase Base, TOffset Offset);
 
 private:
-  FileBinaryStream         m_FileBinStrm;
-  Database                 m_Database;
-  Architecture::VectorSPtr m_Architectures;
-  Loader::VectorSPtr       m_Loaders;
-  Serialize::VectorSPtr    m_Serializes;
-  Disassembler             m_Disasm;
+  Architecture::SharedPtr         GetArchitecture(Tag ArchTag) const;
+
+  FileBinaryStream                m_FileBinStrm;
+  Database                        m_Database;
+  Architecture::VectorSharedPtr   m_AvailableArchitectures;
+  Architecture::TagMap            m_UsedArchitectures;
+  Tag                             m_DefaultArchitectureTag;
+  Loader::VectorSharedPtr         m_Loaders;
+  Analyzer                        m_Analyzer; /* don't shorten this word :) */
+  u32                             m_ArchIdPool;
+  typedef boost::mutex            MutexType;
+  mutable MutexType               m_Mutex;
 };
 
 MEDUSA_NAMESPACE_END

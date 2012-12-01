@@ -6,17 +6,25 @@ set(SRC
   ${INCROOT}/address.hpp
   ${INCROOT}/architecture.hpp
   ${INCROOT}/array.hpp
+  ${INCROOT}/basic_block.hpp
   ${INCROOT}/binary_stream.hpp
+  ${INCROOT}/bits.hpp
   ${INCROOT}/cell.hpp
+  ${INCROOT}/cell_action.hpp
+  ${INCROOT}/cell_data.hpp
   ${INCROOT}/character.hpp
   ${INCROOT}/configuration.hpp
+  ${INCROOT}/control_flow_graph.hpp
+  ${INCROOT}/cpu.hpp
   ${INCROOT}/database.hpp
-  ${INCROOT}/disassembler.hpp
+  ${INCROOT}/analyzer.hpp
   ${INCROOT}/endian.hpp
   ${INCROOT}/event_handler.hpp
   ${INCROOT}/event_queue.hpp
   ${INCROOT}/exception.hpp
   ${INCROOT}/export.hpp
+  ${INCROOT}/expression.hpp
+  ${INCROOT}/extend.hpp
   ${INCROOT}/function.hpp
   ${INCROOT}/instruction.hpp
   ${INCROOT}/label.hpp
@@ -28,25 +36,33 @@ set(SRC
   ${INCROOT}/multicell.hpp
   ${INCROOT}/namespace.hpp
   ${INCROOT}/operand.hpp
+  ${INCROOT}/printer.hpp
   ${INCROOT}/plugin.hpp
-  ${INCROOT}/serialize.hpp
+  ${INCROOT}/screen.hpp
   ${INCROOT}/string.hpp
   ${INCROOT}/struct.hpp
   ${INCROOT}/types.hpp
   ${INCROOT}/value.hpp
+  ${INCROOT}/view.hpp
   ${INCROOT}/xref.hpp
 
   ${SRCROOT}/address.cpp
   ${SRCROOT}/architecture.cpp
   ${SRCROOT}/array.cpp
+  ${SRCROOT}/basic_block.cpp
   ${SRCROOT}/cell.cpp
+  ${SRCROOT}/cell_action.cpp
+  ${SRCROOT}/cell_data.cpp
   ${SRCROOT}/character.cpp
   ${SRCROOT}/configuration.cpp
+  ${SRCROOT}/control_flow_graph.cpp
+  ${SRCROOT}/cpu.cpp
   ${SRCROOT}/database.cpp
-  ${SRCROOT}/disassembler.cpp
+  ${SRCROOT}/analyzer.cpp
   ${SRCROOT}/endian.cpp
   ${SRCROOT}/event_queue.cpp
   ${SRCROOT}/exception.cpp
+  ${SRCROOT}/expression.cpp
   ${SRCROOT}/function.cpp
   ${SRCROOT}/instruction.cpp
   ${SRCROOT}/label.cpp
@@ -56,9 +72,12 @@ set(SRC
   ${SRCROOT}/memory_area.cpp
   ${SRCROOT}/multicell.cpp
   ${SRCROOT}/operand.cpp
+  ${SRCROOT}/printer.cpp
+  ${SRCROOT}/screen.cpp
   ${SRCROOT}/string.cpp
   ${SRCROOT}/struct.cpp
   ${SRCROOT}/value.cpp
+  ${SRCROOT}/view.cpp
   ${SRCROOT}/xref.cpp
   )
 

@@ -1,6 +1,8 @@
 #ifndef _X86_ARCHITECTURE_
 #define _X86_ARCHITECTURE_
 
+#include <sstream>
+
 #include <medusa/types.hpp>
 #include <medusa/architecture.hpp>
 #include <medusa/binary_stream.hpp>
@@ -27,15 +29,16 @@ extern "C" ARCH_X86_EXPORT Architecture* GetArchitecture(void);
 class X86Architecture : public Architecture
 {
 public:
-  X86Architecture(void) : m_Mode(0x0), m_CpuModel(X86_Arch_Sse4a), m_ProcType(X86_ProcType_INTEL) {}
+  X86Architecture(void) : Architecture(MEDUSA_ARCH_TAG('x','8','6')), m_Mode(0x0), m_CpuModel(X86_Arch_Sse4a), m_ProcType(X86_ProcType_INTEL) {}
   ~X86Architecture(void) {}
 
   virtual std::string GetName(void) { return "Intel x86"; }
   virtual bool        Translate(Address const& rVirtAddr, TOffset& rPhysOff) { return false; }
   virtual EEndianness GetEndianness(void) { return LittleEndian; }
   virtual bool        Disassemble(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn);
-  virtual void        FormatCell(Database const& rDatabase, BinaryStream const& rBinStrm, Address const& rAddr, Cell& rCell);
+  virtual void        FormatInstruction(Database const& rDatabase, BinaryStream const& rBinStrm, Address const& rAddr, Instruction& rInsn);
   virtual void        FillConfigurationModel(ConfigurationModel& rCfgMdl);
+  virtual CpuInformation const* GetCpuInformation(void) const { return nullptr; }
 
 private:
 #include "x86_operand.ipp"
@@ -44,8 +47,7 @@ private:
 private:
   static const char * m_Mnemonic[];
 
-  void                FormatInstruction(Database const& rDatabase, BinaryStream const& rBinStrm, Address const& rAddr, Instruction& rInsn);
-  std::string         FormatOperand(Database const& rDb, TOffset Offset, Instruction const& rInsn, Operand const* pOprd);
+  void                FormatOperand(std::ostringstream& rInsnBuf, Database const& rDb, TOffset Offset, Instruction& rInsn, Operand* pOprd);
   void                ApplySegmentOverridePrefix(Instruction &rInsn);
 
   u32 m_Mode;     /* Unused */

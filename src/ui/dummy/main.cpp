@@ -7,6 +7,8 @@
 #include <limits>
 #include <boost/foreach.hpp>
 
+#include "boost/graph/graphviz.hpp"
+
 #include <medusa/configuration.hpp>
 #include <medusa/address.hpp>
 #include <medusa/medusa.hpp>
@@ -28,11 +30,8 @@ std::ostream& operator<<(std::ostream& out, std::pair<u32, std::string> const& p
 class DummyEventHandler : public EventHandler
 {
 public:
-  virtual bool OnCellUpdated(EventHandler::UpdatedCell const& rUpdatedCell)
+  virtual bool OnDatabaseUpdated(void)
   {
-    // For testing purpose, it makes ui_dummy a bit too much verbose
-    BOOST_FOREACH(Address const& rAddr, rUpdatedCell.GetModifiedAddresses())
-      std::cout << "! UpdatedCell event: " << rAddr.ToString() << std::endl;
     return true;
   }
 };
@@ -157,9 +156,9 @@ std::wstring mbstr2wcstr(std::string const& s)
   return result;
 }
 
-void DummyLog(wchar_t const* pMsg)
+void DummyLog(std::wstring const & rMsg)
 {
-  std::wcout << pMsg << std::flush;
+  std::wcout << rMsg << std::flush;
 }
 
 int main(int argc, char **argv)
@@ -207,17 +206,17 @@ int main(int argc, char **argv)
     }
 
     std::cout << "Choose a executable format:" << std::endl;
-    AskFor<Loader::VectorSPtr::value_type, Loader::VectorSPtr> AskForLoader;
-    Loader::VectorSPtr::value_type pLoader = AskForLoader(m.GetSupportedLoaders());
+    AskFor<Loader::VectorSharedPtr::value_type, Loader::VectorSharedPtr> AskForLoader;
+    Loader::VectorSharedPtr::value_type pLoader = AskForLoader(m.GetSupportedLoaders());
     std::cout << "Interpreting executable format using \"" << pLoader->GetName() << "\"..." << std::endl;
     pLoader->Map();
     std::cout << std::endl;
 
     std::cout << "Choose an architecture:" << std::endl;
-    AskFor<Architecture::VectorSPtr::value_type, Architecture::VectorSPtr> AskForArch;
-    Architecture::VectorSPtr::value_type pArch = pLoader->GetMainArchitecture(m.GetArchitectures());
+    AskFor<Architecture::VectorSharedPtr::value_type, Architecture::VectorSharedPtr> AskForArch;
+    Architecture::VectorSharedPtr::value_type pArch = pLoader->GetMainArchitecture(m.GetAvailableArchitectures());
     if (!pArch)
-      pArch = AskForArch(m.GetArchitectures());
+      pArch = AskForArch(m.GetAvailableArchitectures());
 
     std::cout << std::endl;
 
@@ -232,7 +231,7 @@ int main(int argc, char **argv)
     pArch->UseConfiguration(CfgMdl.GetConfiguration());
 
     std::cout << "Disassembling..." << std::endl;
-    m.Disassemble(pLoader, pArch);
+    m.Start(pLoader, pArch);
 
     for (Database::TConstIterator ma = m.GetDatabase().Begin();
       ma != m.GetDatabase().End(); ++ma)
@@ -253,13 +252,13 @@ int main(int argc, char **argv)
 
         std::string RawByte = "\t";
         TOffset Offset = 0;
-        Address::SPtr Addr((*ma)->MakeAddress(cell->first));
+        Address Addr((*ma)->MakeAddress(cell->first));
 
         if (!Label.empty())
           std::cout
             << "\n"
             << (*ma)->GetName() << ":"
-            << Addr->ToString() << ":\t"
+            << Addr.ToString() << ":\t"
             << Label << ":" << std::endl;
 
         MultiCell* pMc = m.GetDatabase().RetrieveMultiCell(cell->first);
@@ -274,7 +273,7 @@ int main(int argc, char **argv)
           };
         }
 
-        if (cell->second->GetType() == Cell::InstructionType)
+        if (cell->second->GetType() == CellData::InstructionType)
           for (size_t i = 0; i < 15; ++i)
           {
             if (i < cell->second->GetLength())
@@ -296,7 +295,7 @@ int main(int argc, char **argv)
 
         std::cout
           << (*ma)->GetName() << ":"
-          << Addr->ToString() << ":"
+          << Addr.ToString() << ":"
           << RawByte
           << " " << cell->second->ToString();
 
@@ -328,18 +327,32 @@ int main(int argc, char **argv)
 
     m.GetDatabase().StopsEventHandling();
 
-    std::cout << "Select the name of the database file:" << std::endl;
-    std::string dbName;
-    std::cin >> dbName;
-    std::cout << std::endl;
+    std::cout << "Enter graph filename: " << std::endl;
+    std::string GraphFileName;
+    std::cin >> GraphFileName;
 
-    std::cout << "Saving database..." << std::endl;
-    Serialize::SPtr s = (*m.GetSerializes().begin());
-    s->Open(dbName);
-    m.Save(*s);
+    auto MultiCells = m.GetDatabase().GetMultiCells();
 
-    std::cout << "Closing database..." << std::endl;
-    m.Close();
+    {
+      ControlFlowGraph Cfg;
+      if (m.BuildControlFlowGraph(pLoader->GetEntryPoint(), Cfg))
+        Cfg.Dump(std::string("oep_") + GraphFileName, m.GetDatabase());
+    }
+    for (auto itMultiCell = std::begin(MultiCells); itMultiCell != std::end(MultiCells); ++itMultiCell)
+    {
+      auto CurLog = Log::Write("core") << "Dumping CFG: " << itMultiCell->first.ToString();
+      ControlFlowGraph Cfg;
+      if (m.BuildControlFlowGraph(itMultiCell->first, Cfg))
+      {
+        std::string AddrStr = itMultiCell->first.ToString();
+        std::replace(std::begin(AddrStr), std::end(AddrStr), ':', '_');
+        Cfg.Dump(AddrStr + std::string("_") + GraphFileName, m.GetDatabase());
+        CurLog << " succeed" << LogEnd;
+        ControlFlowGraph::PositionMap pm;
+        Cfg.Layout(pm);
+      }
+      else CurLog << " failed" << LogEnd;
+    }
   }
   catch (std::exception& e)
   {

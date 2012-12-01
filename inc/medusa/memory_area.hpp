@@ -4,10 +4,10 @@
 #include "medusa/namespace.hpp"
 #include "medusa/export.hpp"
 #include "medusa/cell.hpp"
+#include "medusa/value.hpp"
 #include "medusa/binary_stream.hpp"
 #include "medusa/types.hpp"
 #include "medusa/address.hpp"
-#include "medusa/serialize.hpp"
 
 #include <string>
 #include <vector>
@@ -22,7 +22,7 @@ MEDUSA_NAMESPACE_BEGIN
 #define MA_EXEC    0x00000004
 
 //! MemoryArea contains cells for a slice of memory.
-class Medusa_EXPORT MemoryArea : public SerializeAccess
+class Medusa_EXPORT MemoryArea
 {
 public:
   typedef std::pair<TOffset, Cell*> TCellPair;
@@ -32,11 +32,13 @@ public:
 
   virtual ~MemoryArea(void);
 
+  static bool CompareByVirtualBase(MemoryArea const* lhs, MemoryArea const* rhs);
+
   std::string             ToString(void) const;
 
   Cell*                   RetrieveCell(TOffset Off);
   Cell const*             RetrieveCell(TOffset Off) const;
-  bool                    InsertCell(TOffset Off, Cell* pCell, Address::List& rModifiedAddresses, bool Force = false, bool Safe = true);
+  bool                    InsertCell(TOffset Off, Cell* pCell, Address::List& rErasedCell, bool Force = false, bool Safe = true);
 
   std::string const&      GetName(void)        const   { return m_Name;                       }
   u64                     GetSize(void)        const   { return m_Cells.size();               }
@@ -64,7 +66,7 @@ public:
     return m_VirtualBase.IsBetween(GetSize(), Addr);
   }
 
-  bool                    IsPresent(Address::SPtr spAddr) const
+  bool                    IsPresent(Address::SharedPtr spAddr) const
   {
     if (m_VirtualBase.GetAddressingType() == Address::UnknownType)
       return false;
@@ -72,13 +74,22 @@ public:
     return m_VirtualBase.IsBetween(GetSize(), *spAddr.get());
   }
 
-  Address::SPtr             MakeAddress(TOffset Offset) const
+  void                    FormatAddress(Address& rAddr) const
   {
-    return Address::SPtr(new Address(
+    rAddr = Address(
+      m_VirtualBase.GetAddressingType(),
+      m_VirtualBase.GetBase(),     rAddr.GetOffset(),
+      m_VirtualBase.GetBaseSize(), m_VirtualBase.GetOffsetSize()
+      );
+  }
+
+  Address                 MakeAddress(TOffset Offset) const
+  {
+    return Address(
       m_VirtualBase.GetAddressingType(),
       m_VirtualBase.GetBase(),     Offset,
       m_VirtualBase.GetBaseSize(), m_VirtualBase.GetOffsetSize()
-      ));
+      );
   }
 
   TIterator               Begin(void) { return m_Cells.begin(); }
@@ -92,9 +103,6 @@ public:
   BinaryStream const&     GetBinaryStream(void) const { return m_BinStrm; }
 
   void                    SetEndianness(EEndianness Endianness) { m_BinStrm.SetEndianness(Endianness); }
-
-  virtual void                  Load(SerializeEntity::SPtr SrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
 
   Address const&  GetPhysicalBase(void) const { return m_PhysicalBase; }
   u32             GetPhysicalSize(void) const { return m_PhysicalSize; }
@@ -144,7 +152,7 @@ protected:
     , m_Cells()
   {}
 
-  void                    CreateUnitializeCell(void);
+  void                    CreateUnitializeCell(u32 DefaultValueType);
 
   Cell*                   GetCell(TOffset Off);
   Cell const*             GetCell(TOffset Off) const;
@@ -152,7 +160,7 @@ protected:
   bool                    FillCell(TOffset Off);
   bool                    EraseCell(TOffset Off);
 
-  void                    Sanitize(TOffset NewOff, Address::List& rModifiedAddresses);
+  void                    Sanitize(TOffset NewOff, size_t OldCellSize, Address::List& rErasedCell);
 
   bool                    GetPreviousCell(TOffset& rOff, Cell*& prInfo);
   bool                    GetNextCell(TOffset& rOff, Cell*& prInfo, size_t LimitSize = -1);
@@ -189,14 +197,11 @@ public:
     m_BinStrm.Open(pMemArea, PhysicalSize);
     m_BinStrm.SetEndianness(rBinStrm.GetEndianness());
 
-    CreateUnitializeCell();
+    CreateUnitializeCell(VT_HEX);
   }
 
   virtual bool                  Read(TOffset Offset, void* pBuffer, u32 Size) const;
   virtual bool                  Write(TOffset Offset, void const* pBuffer, u32 Size);
-
-  virtual void                  Load(SerializeEntity::SPtr SrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
 };
 
 //! MappedMemoryArea is a MemoryArea which contains cells present in both file and memory.
@@ -231,14 +236,11 @@ public:
     m_BinStrm.Open(pMemArea, VirtualSize);
     m_BinStrm.SetEndianness(rBinStrm.GetEndianness());
 
-    CreateUnitializeCell();
+    CreateUnitializeCell(VT_HEX);
   }
 
   virtual bool                  Read(TOffset Offset, void* pBuffer, u32 Size) const;
   virtual bool                  Write(TOffset Offset, void const* pBuffer, u32 Size);
-
-  virtual void                  Load(SerializeEntity::SPtr SrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
 };
 
 //! VirtualMemoryArea is a MemoryArea which contains cells present in memory but not in file.
@@ -260,14 +262,11 @@ public:
     m_BinStrm.Open(pMemArea, VirtualSize);
     m_BinStrm.SetEndianness(Endianness);
 
-    CreateUnitializeCell();
+    CreateUnitializeCell(VT_UNK);
   }
 
   virtual bool                  Read(TOffset Offset, void* pBuffer, u32 Size) const;
   virtual bool                  Write(TOffset Offset, void const* pBuffer, u32 Size);
-
-  virtual void                  Load(SerializeEntity::SPtr SrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
 
 protected:
 };

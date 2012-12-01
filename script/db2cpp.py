@@ -104,8 +104,8 @@ def GenInstructionCond(insn):
     if len(insn.cpu_mdl):
         cond.append(' || '.join('m_CpuModel %s' % cm for cm in insn.cpu_mdl))
 
-    for f in insn.flag:
-        # Mode flags
+    for f in insn.attr:
+        # Mode attr
         if f == 'm64':
             cond.append('m_Cfg.Get("Bit") == X86_Bit_64')
         elif f == 'nm64':
@@ -133,9 +133,9 @@ def GenInstructionCond(insn):
         elif f == 'rexw':
             cond.append('rInsn.GetPrefix() & X86_Prefix_REX_w')
 
-        # Unknown flag ?
+        # Unknown attr ?
         #else:
-        #    raise Exception('Unknown flag %s', f)
+        #    raise Exception('Unknown attr %s', f)
 
     if len(insn.prefix):
         cond.append('Prefix == %s' % insn.prefix[0])
@@ -297,19 +297,56 @@ def GenInstructionBody(insn, grps, fpus):
         res += 'rInsn.Length()++;\n'
         res += 'rInsn.SetOpcode(X86_Opcode_%s);\n' % insn.mnemo.capitalize()
         all_mnemo.add(insn.mnemo)
-        if len(insn.cond) != 0:
-            res += 'rInsn.SetCondition(X86_Cond_%s);\n' % insn.cond.capitalize()
-        if hasattr(insn, 'op_type'):
-            op_type = ''
-            if insn.op_type == 'jmp':
-                op_type = 'Jump'
-            elif insn.op_type == 'call':
-                op_type = 'Call'
-            elif insn.op_type == 'ret':
-                op_type = 'Ret'
-            else:
-                raise Exception('Unknown operation type %s' % insn.op_type)
-            res += 'rInsn.SetOperationType(Instruction::Op%s);\n' % op_type
+
+        if len(insn.flags) != 0:
+            fmt_fl = [ [], [], [] ]
+            fl_c = [ 'Instruction::FlCarry' ]
+            fl_p = [ 'Instruction::FlParity' ]
+            fl_a = [ 'Instruction::FlAuxCarry' ]
+            fl_z = [ 'Instruction::FlZero' ]
+            fl_s = [ 'Instruction::FlSign' ]
+            fl_t = [ 'Instruction::FlTrap' ]
+            fl_i = [ 'Instruction::FlInterrupt' ]
+            fl_d = [ 'Instruction::FlDirection' ]
+            fl_o = [ 'Instruction::FlOverflow' ]
+            fl_0 = fl_c + fl_p + fl_a + fl_z + fl_s + fl_o
+            fl_1 = fl_c + fl_p + fl_z + fl_s + fl_o
+            fl_2 = fl_p + fl_a + fl_z + fl_s + fl_o
+            map_fl = {
+                    'c' : fl_c, 'p' : fl_p,
+                    'a' : fl_a, 'z' : fl_z,
+                    's' : fl_s, 't' : fl_t,
+                    'i' : fl_i, 'd' : fl_d,
+                    'o' : fl_o,
+                    '*' : fl_0, '+' : fl_1, '-' : fl_2 }
+            idx = None
+            for i in range(len(insn.flags)):
+                if   insn.flags[i] == 'T': idx = 0
+                elif insn.flags[i] == 'D': idx = 1
+                elif insn.flags[i] == 'U': idx = 2
+                else: fmt_fl[idx] += map_fl[insn.flags[i]]
+
+            if len(fmt_fl[0]) != 0:
+                res += 'rInsn.SetTestedFlags(%s);\n' % ' | '.join(fmt_fl[0])
+            if len(fmt_fl[1]) != 0:
+                res += 'rInsn.SetUpdatedFlags(%s);\n' % ' | '.join(fmt_fl[1])
+            if len(fmt_fl[2]) != 0:
+                res += 'rInsn.SetClearedFlags(%s);\n' % ' | '.join(fmt_fl[2])
+
+        if len(insn.op_type):
+            all_op = []
+            for op in insn.op_type:
+                if op == 'jmp':
+                    all_op.append('Instruction::OpJump')
+                elif op == 'call':
+                    all_op.append('Instruction::OpCall')
+                elif op == 'ret':
+                    all_op.append('Instruction::OpRet')
+                elif op == 'cond':
+                    all_op.append('Instruction::OpCond')
+                else:
+                    raise Exception('Unknown operation type %s' % insn.op_type)
+            res += 'rInsn.SetOperationType(%s);\n' % (' | '.join(all_op))
 
         if hasattr(insn, 'oprd'):
                 res += 'return %s;\n' % GenOperandMethod(insn.oprd)
@@ -457,24 +494,25 @@ def GenOpcodeString(mnemos):
 class Instruction:
     def __init__(self, insn):
         insn = insn.lstrip(' \t')
-        info = insn.split(' ')
+        info = insn.split()
 
         self.mnemo = ''
         if not info[0][0] == '#':
             self.mnemo = info[0]
             info = info[1:]
-        self.cond = ''
-        self.prefix = []
-        self.suffix = []
-        self.flag = []
+        self.flags   = ''
+        self.prefix  = []
+        self.suffix  = []
+        self.attr    = []
         self.cpu_mdl = []
+        self.op_type = []
 
         for i in info[:]:
             if len(i) == 0:
                 continue
 
             if i[0] == '!':
-                self.flag.append(i[1:])
+                self.attr.append(i[1:])
                 info.remove(i)
 
             elif i[0] == '>' or i[0] == '=':
@@ -501,7 +539,7 @@ class Instruction:
                 info.remove(i)
 
             elif i[0] == '?':
-                self.cond = i[1:]
+                self.flags = i[1:]
                 info.remove(i)
 
             elif i[0] == '&':
@@ -511,7 +549,7 @@ class Instruction:
                 info.remove(i)
 
             elif i[0] == '@':
-                self.op_type = i[1:]
+                self.op_type.append(i[1:])
                 info.remove(i)
 
         if len(info) >= 1:
@@ -537,11 +575,11 @@ class Instruction:
         if hasattr(self, 'op_type'):
             res += 'OpType: %s\n' % self.op_type
 
-        if len(self.cond) != 0:
-            res += 'cond: %s\n' % self.cond
+        if len(self.flags) != 0:
+            res += 'flags: %s\n' % self.flags
 
-        if len(self.flag) != 0:
-            res += 'flag: %s\n' % ' | '.join(self.flag)
+        if len(self.attr) != 0:
+            res += 'attr: %s\n' % ' | '.join(self.attr)
 
         if len(self.suffix) != 0:
             res += 'suffix: %s\n' % ', '.join(self.suffix)
@@ -563,7 +601,7 @@ class Instruction:
         return None
 
     def HasCond(self):
-        if len(self.cpu_mdl) or len(self.flag) or len(self.prefix) or len(self.suffix):
+        if len(self.cpu_mdl) or len(self.attr) or len(self.prefix) or len(self.suffix):
             return True
         return False
 

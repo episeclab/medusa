@@ -2,7 +2,7 @@
 #define __MEDUSA_STRING_HPP__
 
 #include "medusa/namespace.hpp"
-#include "medusa/multicell.hpp"
+#include "medusa/cell.hpp"
 
 #include <cctype>
 
@@ -18,17 +18,30 @@ public:
 class AsciiString
 {
 public:
-  virtual bool IsValidCharacter(int Char) const { return !!isprint(Char); }
+  virtual bool IsValidCharacter(int Char) const
+  {
+    switch (Char)
+    {
+      case '\a': case '\b': case '\t': case '\n':
+      case '\v': case '\f': case '\r':
+                                      return true;
+      default:                        return !!isprint(Char);
+    }
+  }
   virtual bool IsFinalCharacter(int Char) const { return Char == '\0';  }
 };
 
-//! String is a MultiCell which handles a string.
-class Medusa_EXPORT String : public MultiCell
+//! String is a Cell which handles a string.
+class Medusa_EXPORT String : public Cell
 {
 public:
-  String(u16 StrLen) : MultiCell(MultiCell::StringType, StrLen) {}
+  String(std::string const& rCharacters = "") : Cell(CellData::StringType), m_Characters(rCharacters) {}
 
-private:
+  virtual size_t      GetLength(void)     const { return m_Characters.length() + 1; }
+  std::string const&  GetCharacters(void) const { return m_Characters;              }
+
+protected:
+  std::string m_Characters;
 };
 
 MEDUSA_NAMESPACE_END

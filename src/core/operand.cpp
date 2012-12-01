@@ -2,30 +2,6 @@
 
 MEDUSA_NAMESPACE_BEGIN
 
-void Operand::Load(SerializeEntity::SPtr spSrlzEtt)
-{
-  spSrlzEtt->GetField("type", m_Type);
-  spSrlzEtt->GetField("name", m_Name);
-  spSrlzEtt->GetField("reg", m_Reg);
-  spSrlzEtt->GetField("sec_reg", m_SecReg);
-  spSrlzEtt->GetField("seg", m_Seg);
-  spSrlzEtt->GetField("value", m_Value);
-  spSrlzEtt->GetField("seg_value", m_SegValue);
-}
-
-SerializeEntity::SPtr Operand::Save(void)
-{
-  SerializeEntity::SPtr Operand(new SerializeEntity("operand"));
-  Operand->AddField("type", m_Type);
-  Operand->AddField("name", m_Name);
-  Operand->AddField("reg", m_Reg);
-  Operand->AddField("sec_reg", m_SecReg);
-  Operand->AddField("seg", m_Seg);
-  Operand->AddField("value", m_Value);
-  Operand->AddField("seg_value", m_SegValue);
-  return Operand;
-}
-
 u8 Operand::GetLength(void) const
 {
     switch (m_Type & DS_MASK)
@@ -36,6 +12,59 @@ u8 Operand::GetLength(void) const
     case DS_64BIT: return sizeof(u64);
     default:       return 0;
     }
+}
+
+Expression *Operand::GetSemantic(CpuInformation const* pCpuInfo) const
+{
+  Expression *pExpr = nullptr;
+
+  if (m_Type == O_NONE)
+      return pExpr;
+
+  if (m_Type & (O_ABS | O_IMM))
+    pExpr = new ConstantExpression(0, m_Value);
+
+  else if (m_Type & O_REG)
+  {
+    pExpr = new IdentifierExpression(m_Reg, pCpuInfo);
+
+    if (m_Type & O_SREG)
+      pExpr = new OperationExpression(
+        OperationExpression::OpAdd,
+        pExpr,
+        new IdentifierExpression(m_SecReg, pCpuInfo));
+
+    if (m_Type & O_SCALE)
+      pExpr = new OperationExpression(
+        OperationExpression::OpMul,
+        pExpr,
+        new ConstantExpression(0, (m_Type >> 9) & 0x4));
+
+    if (m_Type & O_DISP)
+      pExpr = new OperationExpression(
+        OperationExpression::OpAdd,
+        pExpr,
+        new ConstantExpression(0, m_Value));
+  }
+
+  else if (m_Type & O_REL)
+    pExpr = new OperationExpression(
+      OperationExpression::OpAdd,
+      new IdentifierExpression(pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister), pCpuInfo),
+      new ConstantExpression(0, m_Value));
+
+  if (m_Type & O_MEM)
+  {
+    Expression *pBaseExpr = nullptr;
+    if (m_Type & O_SEG)
+      pBaseExpr = new IdentifierExpression(m_Seg, pCpuInfo);
+    else if (m_Type & O_SEG_VAL)
+      pBaseExpr = new ConstantExpression(0, m_SegValue);
+
+    pExpr = new MemoryExpression(pBaseExpr, pExpr);
+  }
+
+  return pExpr;
 }
 
 MEDUSA_NAMESPACE_END

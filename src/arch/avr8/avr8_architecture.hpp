@@ -26,13 +26,14 @@ extern "C" ARCH_AVR8_EXPORT Architecture* GetArchitecture(void);
 class Avr8Architecture : public Architecture
 {
 public:
-  Avr8Architecture(void) {}
+  Avr8Architecture(void) : Architecture(MEDUSA_ARCH_TAG('a','v','r')) {}
 
   virtual std::string GetName(void) { return "Atmel AVR 8-bit"; }
   virtual bool        Translate(Address const& rVirtAddr, TOffset& rPhyslOff);
   virtual bool        Disassemble(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn);
   virtual void        FillConfigurationModel(ConfigurationModel& rCfgMdl) { }
   virtual EEndianness GetEndianness(void) { return LittleEndian; }
+  virtual CpuInformation const* GetCpuInformation(void) const { return nullptr; }
 
 private:
   static char const *m_RegName[];

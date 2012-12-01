@@ -5,6 +5,7 @@
 #include "medusa/architecture.hpp"
 #include "medusa/binary_stream.hpp"
 #include "medusa/instruction.hpp"
+#include "medusa/cpu.hpp"
 
 #include "gameboy_instruction.hpp"
 #include "gameboy_register.hpp"
@@ -25,8 +26,16 @@ extern "C" ARCH_GB_EXPORT Architecture* GetArchitecture(void);
 
 class GameBoyArchitecture : public Architecture
 {
+private:
+  class GameBoyCpuInformation : public CpuInformation
+  {
+  public:
+    virtual char const* ConvertIdentifierToName(u32 Id) const;
+    virtual u32 GetRegisterByType(CpuInformation::Type RegType) const;
+  } m_CpuInfo;
+
 public:
-  GameBoyArchitecture(void) {}
+  GameBoyArchitecture(void) : Architecture(MEDUSA_ARCH_TAG('n','g','b')) {}
 
   virtual std::string GetName(void) { return "Nintendo GameBoy Z80"; }
   virtual bool        Translate(Address const& rVirtAddr, TOffset& rPhyslOff);
@@ -34,6 +43,7 @@ public:
   virtual void        FillConfigurationModel(ConfigurationModel& rCfgMdl);
 
   virtual EEndianness GetEndianness(void) { return LittleEndian; }
+  virtual CpuInformation const* GetCpuInformation(void) const { return &m_CpuInfo; }
 
 private:
   typedef bool (GameBoyArchitecture:: *TDisassembler)(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn);

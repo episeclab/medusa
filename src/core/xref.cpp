@@ -15,16 +15,16 @@ bool XRefs::RemoveRef(Address const& rFrom)
   return true;
 }
 
-bool XRefs::From(Address const& rTo, Address::List& rFromList)
+bool XRefs::From(Address const& rTo, Address::List& rFromList) const
 {
-  for (TXRefs::left_iterator It = m_XRefs.left.begin(); It != m_XRefs.left.end(); ++It)
+  for (TXRefs::left_const_iterator It = m_XRefs.left.begin(); It != m_XRefs.left.end(); ++It)
     if (It->first == rTo)
       rFromList.push_back(It->second);
 
   return !rFromList.empty();
 }
 
-bool XRefs::To(Address const& rFrom, Address& rTo)
+bool XRefs::To(Address const& rFrom, Address& rTo) const
 {
   try
   {
@@ -36,6 +36,15 @@ bool XRefs::To(Address const& rFrom, Address& rTo)
   }
 
   return true;
+}
+
+bool XRefs::HasXRef(Address const& rFrom) const
+{
+  for (TXRefs::right_const_iterator It = m_XRefs.right.begin(); It != m_XRefs.right.end(); ++It)
+    if (It->first == rFrom)
+      return true;
+
+  return false;
 }
 
 void XRefs::EraseAll(void)

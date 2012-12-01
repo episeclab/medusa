@@ -8,10 +8,10 @@
 #include "medusa/multicell.hpp"
 #include "medusa/memory_area.hpp"
 #include "medusa/binary_stream.hpp"
-#include "medusa/serialize.hpp"
 #include "medusa/xref.hpp"
 #include "medusa/label.hpp"
 #include "medusa/event_queue.hpp"
+#include "medusa/view.hpp"
 
 #include <list>
 #include <boost/bimap.hpp>
@@ -22,13 +22,23 @@
 MEDUSA_NAMESPACE_BEGIN
 
 //! Database handles cell, multicell, xref, label and memory area.
-class Medusa_EXPORT Database : public SerializeAccess
+class Medusa_EXPORT Database
 {
 public:
   typedef std::list<MemoryArea*>        TMemoryAreas;
   typedef TMemoryAreas::iterator        TIterator;
   typedef TMemoryAreas::const_iterator  TConstIterator;
   typedef boost::bimap<Address, Label>  TLabelMap;
+
+  View const& GetView(void) const
+  {
+    return m_View;
+  }
+
+  View & GetView(void)
+  {
+    return m_View;
+  }
 
                                 /*!
                                  * The constructor needs a FileBinaryStream
@@ -45,7 +55,7 @@ public:
                                 /*! This method adds a new memory area.
                                  * \param pMemoryArea is the added memory area.
                                  */
-  void                          AddMemoryArea(MemoryArea* pMemoryArea) { m_MemoryAreas.push_back(pMemoryArea); }
+  void                          AddMemoryArea(MemoryArea* pMemoryArea);
 
                                 //! This method returns all memory areas.
   TMemoryAreas&                 GetMemoryAreas(void)        { return m_MemoryAreas; }
@@ -99,16 +109,18 @@ public:
                                  */
   bool                          InsertCell(Address const& rAddr, Cell* pCell, bool Force = false, bool Safe = true);
 
+  void                          UpdateCell(Address const& rAddr, Cell* pCell);
+
                                 //! Returns true if rAddr is contained in the Database.
   bool                          IsPresent(Address const& rAddr) const;
-  bool                          IsPresent(Address::SPtr spAddr) const { return IsPresent(*spAddr.get()); }
+  bool                          IsPresent(Address::SharedPtr spAddr) const { return IsPresent(*spAddr.get()); }
 
                                 //! Returns true if rAddr contains code.
   bool                          ContainsCode(Address const& rAddr) const
   {
     Cell const* pCell = RetrieveCell(rAddr);
     if (pCell == NULL) return false;
-    return pCell->GetType() == Cell::InstructionType;
+    return pCell->GetType() == CellData::InstructionType;
   }
 
                                 //! Returns true if rAddr contains data.
@@ -116,7 +128,7 @@ public:
   {
     Cell const* pCell = RetrieveCell(rAddr);
     if (pCell == NULL) return false;
-    return pCell->GetType() == Cell::ValueType;
+    return pCell->GetType() == CellData::ValueType;
   }
 
   // Value
@@ -127,6 +139,9 @@ public:
                                  *  \param Force makes this method to erase others cells if needed
                                  */
   bool                          ChangeValueSize(Address const& rValueAddr, u8 NewValueSize, bool Force = false);
+
+  // String
+  bool                          MakeString(Address const& rAddr);
 
   // MultiCell
 
@@ -142,6 +157,10 @@ public:
                                  */
   bool                          InsertMultiCell(Address const& rAddr, MultiCell* pMultiCell, bool Force = true);
 
+                                /*! This method returns all couple Address and MultiCell
+                                */
+  MultiCell::Map const&         GetMultiCells(void) const { return m_MultiCells; }
+
   // Address
 
                                 /*! This method makes an Address.
@@ -149,11 +168,11 @@ public:
                                  *  \param Offset is the offset address.
                                  *  \return Returns a shared pointer to a new Address with correct information if base and offset are associated to a memory area, otherwise it returns an empty shared pointer Address.
                                  */
-  Address::SPtr                 MakeAddress(TBase Base, TOffset Offset) const
+  Address                       MakeAddress(TBase Base, TOffset Offset) const
   {
     MemoryArea const* ma = GetMemoryArea(Address(Base, Offset));
     if (ma == NULL)
-      return Address::SPtr();
+      return Address();
     return ma->MakeAddress(Offset);
   }
 
@@ -166,6 +185,8 @@ public:
                                  * \return Returns true if the conversion is possible, otherwise it returns false.
                                  */
   bool                          Convert(Address const& rAddr, TOffset& rMemAreaOffset) const;
+
+  // Data
 
   // Event
   void                          StartsEventHandling(EventHandler* pEvtHdl);
@@ -186,10 +207,10 @@ public:
     if (this == &rDatabase) return *this;
 
     const_cast<FileBinaryStream&>(m_rBinaryStream) = rDatabase.m_rBinaryStream;
-    m_MemoryAreas = rDatabase.m_MemoryAreas;
-    m_MultiCells = rDatabase.m_MultiCells;
-    m_LabelMap = rDatabase.m_LabelMap;
-    m_XRefs = rDatabase.m_XRefs;
+    m_MemoryAreas                                  = rDatabase.m_MemoryAreas;
+    m_MultiCells                                   = rDatabase.m_MultiCells;
+    m_LabelMap                                     = rDatabase.m_LabelMap;
+    m_XRefs                                        = rDatabase.m_XRefs;
     return *this;
   }
 
@@ -202,10 +223,6 @@ public:
   {
   }
 
-  // Serialize
-  virtual void                  Load(SerializeEntity::SPtr SrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
-
 private:
   void ProcessEventQueue(EventHandler* pEvtHdl);
 
@@ -217,7 +234,9 @@ private:
   TLabelMap                     m_LabelMap;
   XRefs                         m_XRefs;
   EventQueue                    m_EventQueue;
-  mutable MutexType             m_Mutex;
+  mutable MutexType             m_MemoryAreaMutex;
+  mutable MutexType             m_CellMutex;
+  View                          m_View;
   boost::thread                 m_Thread;
 };
 

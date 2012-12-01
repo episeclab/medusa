@@ -6,6 +6,8 @@
 #include "medusa/export.hpp"
 #include "medusa/cell.hpp"
 #include "medusa/operand.hpp"
+#include "medusa/database.hpp"
+#include "medusa/expression.hpp"
 
 #include <cstring>
 
@@ -16,7 +18,6 @@
 MEDUSA_NAMESPACE_BEGIN
 
 #define I_NONE 0x0
-#define C_NONE 0x0
 #define P_NONE 0x0
 
 #define OPERAND_NO  4
@@ -27,41 +28,67 @@ class Medusa_EXPORT Instruction : public Cell
 public:
   enum OperationType
   {
-    OpUnknown,  //! The instruction has specific no type
-    OpJump,     //! The instruction changes the execution flow
-    OpCall,     //! The instruction calls a function
-    OpRet,      //! The instruction returns from a procedure
+    //! The instruction has specific no type
+    OpUnknown = 0,
+    //! The instruction changes the execution flow
+    OpJump    = 1 << 0,
+    //! The instruction calls a function
+    OpCall    = 1 << 1,
+    //! The instruction returns from a procedure
+    OpRet     = 1 << 2,
+    //! The instruction is conditional
+    OpCond    = 1 << 3
+  };
+
+  enum FlagsType
+  {
+    FlNone      = 0,
+    FlCarry     = 1 << 0,
+    FlParity    = 1 << 1,
+    FlAuxCarry  = 1 << 2,
+    FlZero      = 1 << 3,
+    FlSign      = 1 << 4,
+    FlTrap      = 1 << 5,
+    FlInterrupt = 1 << 6,
+    FlDirection = 1 << 7,
+    FlOverflow  = 1 << 8
   };
 
   /*! Instruction construction
    * \param Name is the name of the instruction, it must not be allocated.
    * \param Opcode is the unique id for a kind of instruction.
    * \param Length is the length of this instruction.
-   * \param Cond must be set if this instruction has a condition.
-   * \param Prefix must be set if this instruction has a prefix.
    */
-  Instruction(char const* Name = NULL, u32 Opcode = I_NONE, u8 Length = 0, u8 Cond = C_NONE, u16 Prefix = P_NONE)
-    : Cell(Cell::InstructionType)
+  Instruction(char const* Name = NULL, u32 Opcode = I_NONE, u8 Length = 0)
+    : Cell(CellData::InstructionType)
     , m_OperationType(OpUnknown)
     , m_pName(NULL)
     , m_Opcd(Opcode)
     , m_Length(Length)
-    , m_Cond(Cond)
-    , m_Prefix(Prefix)
+    , m_Prefix()
+    , m_TestedFlags()
+    , m_UpdatedFlags()
+    , m_ClearedFlags()
+    , m_FixedFlags()
+    , m_pRootExpr(nullptr)
   {
   }
-  ~Instruction(void) {}
+
+  ~Instruction(void);
 
   virtual size_t          GetLength(void) const       { return m_Length;          }
 
   char const*             GetName(void) const         { return m_pName;           }
-  u8                      GetCond(void) const         { return m_Cond;            }
   u32                     GetOperationType(void) const{ return m_OperationType;   }
 
   void                    SetName(char const* pName)  { m_pName = pName;          }
   void                    SetOpcode(u32 Opcd)         { m_Opcd = Opcd;            }
-  void                    SetCondition(u8 Cond)       { m_Cond = Cond;            }
   void                    SetOperationType(u8 OperationType) { m_OperationType = OperationType; }
+  void                    SetTestedFlags(u32 Flags)   { m_TestedFlags = Flags;    }
+  void                    SetUpdatedFlags(u32 Flags)  { m_UpdatedFlags = Flags;   }
+  void                    SetClearedFlags(u32 Flags)  { m_ClearedFlags = Flags;   }
+  void                    SetFixedFlags(u32 Flags)    { m_FixedFlags = Flags;     }
+  void                    SetSemantic(Expression *pExpr);
 
   medusa::Operand*        Operand(unsigned int Oprd)
   { return Oprd > OPERAND_NO ? NULL : &m_Oprd[Oprd];                              }
@@ -75,30 +102,41 @@ public:
   u32&                    Opcode(void)                { return m_Opcd;            }
   u8 &                    OperationType(void)         { return m_OperationType;   }
   u8 &                    Length(void)                { return m_Length;          }
-  u8 &                    Cond(void)                  { return m_Cond;            }
   u32&                    Prefix(void)                { return m_Prefix;          }
+  u32&                    TestedFlags(void)           { return m_TestedFlags;     }
+  u32&                    UpdatedFlags(void)          { return m_UpdatedFlags;    }
+  u32&                    ClearedFlags(void)          { return m_ClearedFlags;    }
+  u32&                    FixedFlags(void)            { return m_FixedFlags;      }
+
+  u32                     GetOpcode(void) const       { return m_Opcd;            }
   u32                     GetPrefix(void) const       { return m_Prefix;          }
+  u32                     GetTestedFlags(void) const  { return m_TestedFlags;     }
+  u32                     GetUpdatedFlags(void) const { return m_UpdatedFlags;    }
+  u32                     GetClearedFlags(void) const { return m_ClearedFlags;    }
+  u32                     GetFixedFlags(void) const   { return m_FixedFlags;      }
+  Expression*             GetSemantic(void) const     { return m_pRootExpr;       }
 
   /*! This method gives the offset of a specified operand
-   * \param Oprd The operand number betweend 0 (included) and OPERAND_NO (excluded).
+   * \param Oprd The operand number between 0 (included) and OPERAND_NO (excluded).
    * \return Returns 0 if the specified operand doesn't hold an offset or the offset.
    */
   u8                      GetOperandOffset(u8 Oprd) const;
-  bool                    GetOperandReference(BinaryStream const& rBinStrm, u8 Oprd, Address const& rAddrSrc, Address& rAddrDst) const;
+  bool                    GetOperandReference(Database const& rDatabase, u8 Oprd, Address const& rAddrSrc, Address& rAddrDst) const;
   u8                      GetOperandReferenceLength(u8 Oprd) const;
   bool                    GetOperandAddress(u8 Oprd, Address const& rAddrSrc, Address& rAddrDst) const;
 
-  virtual void                  Load(SerializeEntity::SPtr spSrlzEtt);
-  virtual SerializeEntity::SPtr Save(void);
-
 private:
-  u8                      m_OperationType;    /*! This integer holds jmp/branch type (call, ret, ...)           */
-  char const*             m_pName;            /*! This string holds the instruction name ("call", "lsl", ...)   */
-  medusa::Operand         m_Oprd[OPERAND_NO]; /*! This array holds all operands                                 */
-  u32                     m_Opcd;             /*! This integer holds the current opcode (ARM_Ldr, GB_Swap, ...) */
-  u8                      m_Length;           /*! This integer holds the length of instruction (1, 2, ...)      */
-  u8                      m_Cond;             /*! This integer holds the conditional type (none, zero, carry)   */
-  u32                     m_Prefix;           /*! This integer holds prefix flag (REP, LOCK, ...)               */
+  u8                      m_OperationType;    /*! This integer holds jmp/branch type (call, ret, ...)                 */
+  char const*             m_pName;            /*! This string holds the instruction name ("call", "lsl", ...)         */
+  medusa::Operand         m_Oprd[OPERAND_NO]; /*! This array holds all operands                                       */
+  u32                     m_Opcd;             /*! This integer holds the current opcode (ARM_Ldr, GB_Swap, ...)       */
+  u8                      m_Length;           /*! This integer holds the length of instruction (1, 2, ...)            */
+  u32                     m_Prefix;           /*! This integer holds prefix flag (REP, LOCK, ...)                     */
+  u32                     m_TestedFlags;      /*! This integer holds flags that are tested by the instruction         */
+  u32                     m_UpdatedFlags;     /*! This integer holds flags that could be modified by the instruction  */
+  u32                     m_ClearedFlags;     /*! This integer holds flags that are unset by the instruction          */
+  u32                     m_FixedFlags;       /*! This integer holds flags that are set by the instruction            */
+  Expression             *m_pRootExpr;        /*! This pointer, if not null, contains the semantic of the instruction */
   };
 
 MEDUSA_NAMESPACE_END

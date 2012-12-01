@@ -5,6 +5,8 @@
 #include "medusa/export.hpp"
 #include "medusa/address.hpp"
 
+#include "medusa/label.hpp"
+
 #include <string>
 #include <boost/variant.hpp>
 
@@ -13,33 +15,32 @@ MEDUSA_NAMESPACE_BEGIN
 class Medusa_EXPORT EventHandler : public boost::static_visitor<bool>
 {
 public:
-  class Quit{};
+  class Quit {};
+  class DatabaseUpdated {};
 
-  class UpdatedCell
+  class LabelAdded
   {
   public:
-    UpdatedCell(Address::List const& rModifiedAddresses)
-      : m_rModifiediedAddresses(rModifiedAddresses) {}
-
-    Address::List const& GetModifiedAddresses(void) const
-    { return m_rModifiediedAddresses; }
-
+    LabelAdded(Label const& rLbl) : m_Lbl(rLbl) {}
+    Label const& GetLabel(void) const { return m_Lbl; }
   private:
-    Address::List m_rModifiediedAddresses;
+    Label m_Lbl;
   };
 
-  typedef boost::variant<Quit, UpdatedCell> EventType;
+  typedef boost::variant<Quit, DatabaseUpdated, LabelAdded> EventType;
 
-  virtual bool OnQuit(void)                       { return false; }
-  virtual bool OnCellUpdated(UpdatedCell const&)  { return true;  }
+  virtual bool OnQuit(void)                    { return false; }
+  virtual bool OnDatabaseUpdated(void)         { return true;  }
+  virtual bool OnLabelAdded(LabelAdded const&) { return true;  }
 
   bool operator()(EventType const& rEvent)
   {
     return boost::apply_visitor(*this, rEvent);
   }
 
-  bool operator()(Quit const&)                     { return OnQuit();                    }
-  bool operator()(UpdatedCell const& rUpdatedCell) { return OnCellUpdated(rUpdatedCell); }
+  bool operator()(Quit const&)                 { return OnQuit();                }
+  bool operator()(DatabaseUpdated const&)      { return OnDatabaseUpdated();     }
+  bool operator()(LabelAdded const& rLblAdded) { return OnLabelAdded(rLblAdded); }
 };
 
 MEDUSA_NAMESPACE_END
