@@ -34,8 +34,8 @@ MEDUSA_NAMESPACE_BEGIN
 #define O_REG_PC_REL 0x08000000 // Register operand holds the current address
 
 // Register Size
-#define REG_MASK     0x0000000f
-#define RS_UNK       0x00000001
+#define RS_MASK      0x0000000f
+#define RS_1BIT      0x00000001
 #define RS_8BIT      0x00000002
 #define RS_16BIT     0x00000003
 #define RS_32BIT     0x00000004
@@ -54,11 +54,10 @@ MEDUSA_NAMESPACE_BEGIN
 
 // SCale
 #define SC_MASK      0x00000f00
-#define SC_UNK       0x00000100
-#define SC_1         0x00000200
-#define SC_2         0x00000300
+#define SC_1         0x00000100
+#define SC_2         0x00000200
 #define SC_4         0x00000400
-#define SC_8         0x00000500
+#define SC_8         0x00000800
 
 // Memory Size (dereferencement)
 #define MS_MASK      0x0000f000
@@ -70,6 +69,7 @@ MEDUSA_NAMESPACE_BEGIN
 #define MS_128BIT    0x00006000
 
 // Alias
+#define O_REG1     (O_REG   | RS_1BIT  )
 #define O_REG8     (O_REG   | RS_8BIT  )
 #define O_REG16    (O_REG   | RS_16BIT )
 #define O_REG32    (O_REG   | RS_32BIT )
@@ -134,20 +134,21 @@ public:
   u16         GetSecReg(void)   const            { return m_SecReg;          }
   u16         GetSeg(void)      const            { return m_Seg;             }
   u64         GetValue(void)    const
-                                                 {
+  {
     switch (m_Type & DS_MASK)
-                                                 {
+    {
     case DS_8BIT:           return m_Value & 0xff;
     case DS_16BIT:          return m_Value & 0xffff;
     case DS_32BIT:          return m_Value & 0xffffffff;
     case DS_64BIT: default: return m_Value;
-                                                                             }
-                                                                             }
+    }
+  }
   u16         GetSegValue(void) const            { return m_SegValue;        }
 
   u8          GetLength(void) const;
+  u8          GetRawLength(void) const;
 
-  Expression *GetSemantic(CpuInformation const* pCpuInfo) const;
+  Expression *GetSemantic(CpuInformation const* pCpuInfo, u8 InstructionLength = 0, bool Dereference = true) const;
 
   void        SetType(u32 Type)                  { m_Type     = Type;        }
   void        SetName(std::string const& rName)  { m_Name     = rName;       }

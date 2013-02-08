@@ -77,7 +77,7 @@ public:
 
       m_rDatabase.AddMemoryArea(new MappedMemoryArea(
         m_rDatabase.GetFileBinaryStream(), SectionName,
-        Address(Address::PhysicalType, sc.PointerToRawData),                      sc.SizeOfRawData,
+        Address(Address::PhysicalType, sc.PointerToRawData),                                  sc.SizeOfRawData,
         Address(Address::FlatType, 0x0, m_ImageBase + sc.VirtualAddress, 16, sizeof(n) * 8),  sc.Misc.VirtualSize,
         Flags
         ));
@@ -115,6 +115,8 @@ public:
     // Find Import
     Off += sizeof(PeDataDirectory);
     m_rDatabase.GetFileBinaryStream().Read(Off, ImportOff);
+    if (ImportOff == 0x0)
+      return;
     m_rDatabase.Translate((TOffset) m_ImageBase + ImportOff, tmp);
     ImportOff = static_cast<u32>(tmp);
     m_rDatabase.GetFileBinaryStream().Read(Off + sizeof(((PeDataDirectory*)0)->VirtualAddress), ImportSize);
@@ -132,7 +134,7 @@ public:
         {
           m_rDatabase.GetFileBinaryStream().Read(CurImp.Name++, c);
           if (c)
-            DllName += c;
+            DllName += tolower(c);
         } while (c);
       }
 

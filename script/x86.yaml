@@ -1,6 +1,6 @@
 #
 ## Description ################################################################
-# This yaml file try do detail all x86 instruction.
+# This yaml file tries do detail all x86 instruction.
 # It's used by Medusa to generate c++ code in order to disassemble x86
 # executable.
 # Check out http://github.com/wisk/medusa for further information.
@@ -14,19 +14,71 @@ arch_info:
 
 semantic:
   add: &add
-    op0 += op1
+    [ op0 += op1 ]
+
+  adc: &adc
+    [ op0 += (op1 + X86_FlCf) ]
+
+  inc: &inc
+    [ op0 += 1 ]
 
   and: &and
-    op0 &= op1
+    [ op0 &= op1 ]
 
   or: &or
-    op0 |= op1
+    [ op0 |= op1 ]
 
   sub: &sub
-    op0 -= op1
+    [ op0 -= op1 ]
+
+  dec: &dec
+    [ op0 -= 1 ]
 
   xor: &xor
-    op0 ^= op1
+    [ op0 ^= op1 ]
+
+  mov: &mov
+    [ op0 = op1 ]
+
+  push: &push
+    [ stack.id -= stack.size, stack.mem = op0 ]
+
+  pop: &pop
+    [ op0 = stack.mem, stack.id += stack.size ]
+
+  jmp: &jmp
+    [ program.id = op0 ]
+
+  call: &call
+    [ stack.id -= stack.size, stack.mem = (program.id + insn.size), program.id = op0 ]
+
+  ret: &ret
+    [ program.id = stack.mem, stack.id += stack.size ]
+
+  cmpz: &cmpz
+    [ 'if (op0 - op1) == 0: X86_FlZf = 1' ]
+
+  cmp: &cmp
+    [ *cmpz ]
+
+  testz: &testz
+    [ 'if (op0 & op1) == 0: X86_FlZf = 1' ]
+
+  test: &test
+    [ *testz ]
+
+  jmpz: &jmpz
+    [ 'if X86_FlZf == 1: program.id = op0' ]
+
+  jmpnz: &jmpnz
+    [ 'if X86_FlZf == 0: program.id = op0' ]
+
+  not: &not
+    [ op0 = op0 ^ -1 ]
+
+  movzx: &movzx
+    [ op0 = 0, op0 |= op1 ]
+
 
 ## Instruction definition #####################################################
 
@@ -75,11 +127,13 @@ insn:
         mnemonic: push
         operand: [ ES ]
         attr: [ nm64 ]
+        semantic: *push
 
       - opcode: 0x07
         mnemonic: pop
         operand: [ ES ]
         attr: [ nm64 ]
+        semantic: *pop
 
       - opcode: 0x08
         mnemonic: or
@@ -127,6 +181,7 @@ insn:
         mnemonic: push
         operand: [ CS ]
         attr: [ nm64 ]
+        semantic: *push
 
       - opcode: 0x0f
         reference: table_2
@@ -137,46 +192,54 @@ insn:
         operand: [ Eb, Gb ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x11
         mnemonic: adc
         operand: [ Ev, Gv ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x12
         mnemonic: adc
         operand: [ Gb, Eb ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x13
         mnemonic: adc
         operand: [ Gv, Ev ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x14
         mnemonic: adc
         operand: [ AL, Ib ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x15
         mnemonic: adc
         operand: [ rAX, Iz ]
         test_flags: [ cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *adc
 
       - opcode: 0x16
         mnemonic: push
         operand: [ SS ]
         attr: [ nm64 ]
+        semantic: *push
 
       - opcode: 0x17
         mnemonic: pop
         operand: [ SS ]
         attr: [ nm64 ]
+        semantic: *pop
 
       - opcode: 0x18
         mnemonic: sbb
@@ -218,11 +281,13 @@ insn:
         mnemonic: push
         operand: [ DS ]
         attr: [ nm64 ]
+        semantic: *push
 
       - opcode: 0x1f
         mnemonic: pop
         operand: [ DS ]
         attr: [ nm64 ]
+        semantic: *pop
 
       - opcode: 0x20
         mnemonic: and
@@ -385,31 +450,37 @@ insn:
         mnemonic: cmp
         operand: [ Eb, Gb ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x39
         mnemonic: cmp
         operand: [ Ev, Gv ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x3a
         mnemonic: cmp
         operand: [ Gb, Eb ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x3b
         mnemonic: cmp
         operand: [ Gv, Ev ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x3c
         mnemonic: cmp
         operand: [ AL, Ib ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x3d
         mnemonic: cmp
         operand: [ rAX, Iz ]
         update_flags: [ cf, pf, af, zf, sf, of ]
+        semantic: *cmp
 
       - opcode: 0x3e
         sub_opcodes:
@@ -432,6 +503,7 @@ insn:
           - mnemonic: inc
             operand: [ eAX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX
             constraint: pfx1
@@ -442,6 +514,7 @@ insn:
           - mnemonic: inc
             operand: [ eCX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_b
             constraint: pfx1
@@ -452,6 +525,7 @@ insn:
           - mnemonic: inc
             operand: [ eDX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_x
             constraint: pfx1
@@ -462,6 +536,7 @@ insn:
           - mnemonic: inc
             operand: [ eBX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_xb
             constraint: pfx1
@@ -472,6 +547,7 @@ insn:
           - mnemonic: inc
             operand: [ eSP ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_r
             constraint: pfx1
@@ -482,6 +558,7 @@ insn:
           - mnemonic: inc
             operand: [ eBP ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_rb
             constraint: pfx1
@@ -492,6 +569,7 @@ insn:
           - mnemonic: inc
             operand: [ eSI ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_rx
             constraint: pfx1
@@ -502,6 +580,7 @@ insn:
           - mnemonic: inc
             operand: [ eDI ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *inc
 
           - mnemonic: REX_rxb
             constraint: pfx1
@@ -512,6 +591,7 @@ insn:
           - mnemonic: dec
             operand: [ eAX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_w
             constraint: pfx1
@@ -522,6 +602,7 @@ insn:
           - mnemonic: dec
             operand: [ eCX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wb
             constraint: pfx1
@@ -532,6 +613,7 @@ insn:
           - mnemonic: dec
             operand: [ eDX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wx
             constraint: pfx1
@@ -542,6 +624,7 @@ insn:
           - mnemonic: dec
             operand: [ eBX ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wxb
             constraint: pfx1
@@ -552,6 +635,7 @@ insn:
           - mnemonic: dec
             operand: [ eSP ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wr
             constraint: pfx1
@@ -562,6 +646,7 @@ insn:
           - mnemonic: dec
             operand: [ eBP ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wrb
             constraint: pfx1
@@ -572,6 +657,7 @@ insn:
           - mnemonic: dec
             operand: [ eSI ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wrx
             constraint: pfx1
@@ -582,6 +668,7 @@ insn:
           - mnemonic: dec
             operand: [ eDI ]
             update_flags: [ pf, af, zf, sf, of ]
+            semantic: *dec
 
           - mnemonic: REX_wrxb
             constraint: pfx1
@@ -592,171 +679,203 @@ insn:
           - mnemonic: push
             operand: [ rAX ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r8 ]
             attr: [ rexb, m64 ]
+            semantic: *push
 
       - opcode: 0x51
         sub_opcodes:
           - mnemonic: push
             operand: [ rCX ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r9 ]
             attr: [ rexb, m64 ]
+            semantic: *push
 
       - opcode: 0x52
         sub_opcodes:
           - mnemonic: push
             operand: [ rDX ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r10 ]
             attr: [ rexb, m64 ]
+            semantic: *push
 
       - opcode: 0x53
         sub_opcodes:
           - mnemonic: push
             operand: [ rBX ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r11 ]
             attr: [ rexb, m64 ]
+            semantic: *push
 
       - opcode: 0x54
         sub_opcodes:
           - mnemonic: push
             operand: [ rSP ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r12 ]
             attr: [ rexb, m64 ]
+            semantic: *push
 
       - opcode: 0x55
         sub_opcodes:
           - mnemonic: push
             operand: [ rBP ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r13 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *push
 
       - opcode: 0x56
         sub_opcodes:
           - mnemonic: push
             operand: [ rSI ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r14 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *push
 
       - opcode: 0x57
         sub_opcodes:
           - mnemonic: push
             operand: [ rDI ]
             constraint: d64
+            semantic: *push
 
           - mnemonic: push
             operand: [ r15 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *push
 
       - opcode: 0x58
         sub_opcodes:
           - mnemonic: pop
             operand: [ rAX ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r8 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x59
         sub_opcodes:
           - mnemonic: pop
             operand: [ rCX ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r9 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5a
         sub_opcodes:
           - mnemonic: pop
             operand: [ rDX ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r10 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5b
         sub_opcodes:
           - mnemonic: pop
             operand: [ rBX ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r11 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5c
         sub_opcodes:
           - mnemonic: pop
             operand: [ rSP ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r12 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5d
         sub_opcodes:
           - mnemonic: pop
             operand: [ rBP ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r13 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5e
         sub_opcodes:
           - mnemonic: pop
             operand: [ rSI ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r14 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x5f
         sub_opcodes:
           - mnemonic: pop
             operand: [ rDI ]
             constraint: d64
+            semantic: *pop
 
           - mnemonic: pop
             operand: [ r15 ]
             attr: [ rexb, m64 ]
             constraint: d64
+            semantic: *pop
 
       - opcode: 0x60
         sub_opcodes:
@@ -827,6 +946,7 @@ insn:
         operand: [ Iz ]
         cpu_model: ">= X86_Arch_80186"
         constraint: d64
+        semantic: *push
 
       - opcode: 0x69
         mnemonic: imul
@@ -840,10 +960,11 @@ insn:
         operand: [ Ib ]
         cpu_model: ">= X86_Arch_80186"
         constraint: d64
+        semantic: *push
 
       - opcode: 0x6b
         mnemonic: imul
-        operand: [ Gv, Ev, Ib ]
+        operand: [ Gv, Ev, Ibs ]
         update_flags: [ of, cf ]
         clear_flags: [ sf, zf, af, pf ]
         cpu_model: ">= X86_Arch_80186"
@@ -901,12 +1022,14 @@ insn:
         operand: [ Jb ]
         operation_type: ['jmp', 'cond']
         test_flags: [ zf ]
+        semantic: *jmpz
 
       - opcode: 0x75
         mnemonic: jnz
         operand: [ Jb ]
         operation_type: ['jmp', 'cond']
         test_flags: [ zf ]
+        semantic: *jmpnz
 
       - opcode: 0x76
         mnemonic: jbe
@@ -982,7 +1105,7 @@ insn:
         attr: [ nm64 ]
 
       - opcode: 0x83
-        operand: [ Ev, Ib ]
+        operand: [ Ev, Ibs ]
         reference: group_01
 
       - opcode: 0x84
@@ -1008,30 +1131,37 @@ insn:
       - opcode: 0x88
         mnemonic: mov
         operand: [ Eb, Gb ]
+        semantic: *mov
 
       - opcode: 0x89
         mnemonic: mov
         operand: [ Ev, Gv ]
+        semantic: *mov
 
       - opcode: 0x8a
         mnemonic: mov
         operand: [ Gb, Eb ]
+        semantic: *mov
 
       - opcode: 0x8b
         mnemonic: mov
         operand: [ Gv, Ev ]
+        semantic: *mov
 
       - opcode: 0x8c
         mnemonic: mov
         operand: [ Ew, Sw ]
+        semantic: *mov
 
       - opcode: 0x8d
         mnemonic: lea
         operand: [ Gv, M ]
+        semantic: [ op0 = op1.addr ]
 
       - opcode: 0x8e
         mnemonic: mov
         operand: [ Sw, Ew ]
+        semantic: *mov
 
       - opcode: 0x8f
         reference: group_1A
@@ -1158,19 +1288,23 @@ insn:
 
       - opcode: 0xa0
         mnemonic: mov
-        operand: [ AL, Ov ]
+        operand: [ AL, Ob ]
+        semantic: *mov
 
       - opcode: 0xa1
         mnemonic: mov
         operand: [ rAX, Ov ]
+        semantic: *mov
 
       - opcode: 0xa2
         mnemonic: mov
-        operand: [ Ov, AL ]
+        operand: [ Ob, AL ]
+        semantic: *mov
 
       - opcode: 0xa3
         mnemonic: mov
         operand: [ Ov, rAX ]
+        semantic: *mov
 
       - opcode: 0xa4
         mnemonic: movs
@@ -1242,145 +1376,177 @@ insn:
         sub_opcodes:
           - mnemonic: mov
             operand: [ AL, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r8b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb1
         sub_opcodes:
           - mnemonic: mov
             operand: [ CL, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r9b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb2
         sub_opcodes:
           - mnemonic: mov
             operand: [ DL, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r10b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb3
         sub_opcodes:
           - mnemonic: mov
             operand: [ BL, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r11b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb4
         sub_opcodes:
           - mnemonic: mov
             operand: [ AH, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r12b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb5
         sub_opcodes:
           - mnemonic: mov
             operand: [ CH, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r13b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb6
         sub_opcodes:
           - mnemonic: mov
             operand: [ DH, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r14b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb7
         sub_opcodes:
           - mnemonic: mov
             operand: [ BH, Ib ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r15b, Ib ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb8
         sub_opcodes:
           - mnemonic: mov
             operand: [ rAX, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r8, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xb9
         sub_opcodes:
           - mnemonic: mov
             operand: [ rCX, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r9, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xba
         sub_opcodes:
           - mnemonic: mov
             operand: [ rDX, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r10, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xbb
         sub_opcodes:
           - mnemonic: mov
             operand: [ rBX, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r11, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xbc
         sub_opcodes:
           - mnemonic: mov
             operand: [ rSP, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r12, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xbd
         sub_opcodes:
           - mnemonic: mov
             operand: [ rBP, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r13, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xbe
         sub_opcodes:
           - mnemonic: mov
             operand: [ rSI, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r14, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xbf
         sub_opcodes:
           - mnemonic: mov
             operand: [ rDI, Iv ]
+            semantic: *mov
 
           - mnemonic: mov
             operand: [ r15, Iv ]
             attr: [ rexb ]
+            semantic: *mov
 
       - opcode: 0xc0
         operand: [ Eb, Ib ]
@@ -1394,10 +1560,12 @@ insn:
         mnemonic: ret
         operand: [ Iw ]
         operation_type: ['ret']
+        semantic: [ program.id = stack.mem, stack.id += stack.size, stack.id += op0 ]
 
       - opcode: 0xc3
         mnemonic: ret
         operation_type: ['ret']
+        semantic: *ret
 
       - opcode: 0xc4
         sub_opcodes:
@@ -1435,6 +1603,7 @@ insn:
         mnemonic: leave
         cpu_model: ">= X86_Arch_80186"
         constraint: d64
+        semantic: [ stack.id = frame.id, frame.id = stack.mem, stack.id += stack.size ]
 
       - opcode: 0xca
         mnemonic: retf
@@ -1576,22 +1745,26 @@ insn:
         mnemonic: call
         operand: [ Jz ]
         operation_type: ['call']
+        semantic: *call
 
       - opcode: 0xe9
         mnemonic: jmp
         operand: [ Jz ]
         operation_type: ['jmp']
+        semantic: *jmp
 
       - opcode: 0xea
         mnemonic: jmp
         operand: [ Ap ]
         operation_type: ['jmp']
         attr: [ nm64 ]
+        semantic: *jmp
 
       - opcode: 0xeb
         mnemonic: jmp
         operand: [ Jb ]
         operation_type: ['jmp']
+        semantic: *jmp
 
       - opcode: 0xec
         mnemonic: in
@@ -1628,6 +1801,7 @@ insn:
 
       - opcode: 0xf4
         mnemonic: hlt
+        operation_type: ['ret']
 
       - opcode: 0xf5
         mnemonic: cmc
@@ -1962,6 +2136,7 @@ insn:
           - mnemonic: mov
             operand: [ Ry, Ty ]
             cpu_model: "== X86_Arch_80386"
+            semantic: *mov
 
             reference: table_sse5a
             attr: [ amd ]
@@ -1981,6 +2156,7 @@ insn:
             operand: [ Ty, Ry ]
             constraint: f64
             cpu_model: "== X86_Arch_80386"
+            semantic: *mov
 
       - opcode: 0x27
         invalid:
@@ -2239,6 +2415,7 @@ insn:
         operand: [ Gv, Ev ]
         operation_type: ['cond']
         test_flags: [ zf ]
+        semantic: [ 'if X86_FlZf == 1: op0 = op1' ]
 
       - opcode: 0x45
         mnemonic: cmovnz
@@ -2941,6 +3118,7 @@ insn:
         operation_type: ['jmp', 'cond']
         test_flags: [ zf ]
         cpu_model: ">= X86_Arch_80386"
+        semantic: *jmpz
 
       - opcode: 0x85
         mnemonic: jnz
@@ -2949,6 +3127,7 @@ insn:
         operation_type: ['jmp', 'cond']
         test_flags: [ zf ]
         cpu_model: ">= X86_Arch_80386"
+        semantic: *jmpnz
 
       - opcode: 0x86
         mnemonic: jbe
@@ -3131,12 +3310,14 @@ insn:
         operand: [ FS ]
         constraint: df64
         cpu_model: ">= X86_Arch_80386"
+        semantic: *push
 
       - opcode: 0xa1
         mnemonic: pop
         operand: [ FS ]
         constraint: df64
         cpu_model: ">= X86_Arch_80386"
+        semantic: *pop
 
       - opcode: 0xa2
         mnemonic: cpuid
@@ -3183,12 +3364,14 @@ insn:
         operand: [ GS ]
         constraint: d64
         cpu_model: ">= X86_Arch_80386"
+        semantic: *push
 
       - opcode: 0xa9
         mnemonic: pop
         operand: [ GS ]
         constraint: d64
         cpu_model: ">= X86_Arch_80386"
+        semantic: *pop
 
       - opcode: 0xaa
         mnemonic: rsm
@@ -3251,11 +3434,13 @@ insn:
         mnemonic: movzx
         operand: [ Gv, Eb ]
         cpu_model: ">= X86_Arch_80386"
+        semantic: *movzx
 
       - opcode: 0xb7
         mnemonic: movzx
         operand: [ Gv, Ew ]
         cpu_model: ">= X86_Arch_80386"
+        semantic: *movzx
 
       - opcode: 0xb8
         sub_opcodes:
@@ -10824,6 +11009,7 @@ insn:
 
     - opcode: 0x02
       mnemonic: adc
+      semantic: *adc
 
     - opcode: 0x03
       mnemonic: sbb
@@ -10842,12 +11028,14 @@ insn:
 
     - opcode: 0x07
       mnemonic: cmp
+      semantic: *cmp
 
     group_01A:
     - opcode: 0x00
       mnemonic: pop
       operand: [ Ev ]
       constraint: d64
+      semantic: *pop
 
     - opcode: 0x01
       mnemonic: Xop
@@ -10886,9 +11074,11 @@ insn:
 
     - opcode: 0x04
       mnemonic: shl
+      semantic: [ op0 = op0 << op1 ]
 
     - opcode: 0x05
       mnemonic: shr
+      semantic: [ op0 = op0 >> op1 ]
 
     - opcode: 0x06
       mnemonic: sal
@@ -10908,6 +11098,7 @@ insn:
     - opcode: 0x02
       mnemonic: not
       operand: [ Eb ]
+      semantic: *not
 
     - opcode: 0x03
       mnemonic: neg
@@ -10941,6 +11132,7 @@ insn:
     - opcode: 0x02
       mnemonic: not
       operand: [ Ev ]
+      semantic: *not
 
     - opcode: 0x03
       mnemonic: neg
@@ -10966,10 +11158,12 @@ insn:
     - opcode: 0x00
       mnemonic: inc
       operand: [ Eb ]
+      semantic: *inc
 
     - opcode: 0x01
       mnemonic: dec
       operand: [ Eb ]
+      semantic: *dec
 
     - opcode: 0x02
       invalid:
@@ -10993,16 +11187,19 @@ insn:
     - opcode: 0x00
       mnemonic: inc
       operand: [ Ev ]
+      semantic: *inc
 
     - opcode: 0x01
       mnemonic: dec
       operand: [ Ev ]
+      semantic: *dec
 
     - opcode: 0x02
       mnemonic: call
       operand: [ Ev ]
       constraint: df64
       operation_type: ['call']
+      semantic: *call
 
     - opcode: 0x03
       mnemonic: call
@@ -11014,16 +11211,19 @@ insn:
       operand: [ Ev ]
       constraint: df64
       operation_type: ['jmp']
+      semantic: *jmp
 
     - opcode: 0x05
       mnemonic: jmp
       operand: [ Mp ]
       operation_type: ['jmp']
+      semantic: *jmp
 
     - opcode: 0x06
       mnemonic: push
       operand: [ Ev ]
       constraint: d64
+      semantic: *push
 
     - opcode: 0x07
       invalid:
@@ -11294,7 +11494,7 @@ insn:
     group_11:
     - opcode: 0x00
       mnemonic: mov
-      operand: [ Eb, Ib ]
+      semantic: *mov
 
     - opcode: 0x01
       invalid:
@@ -11634,6 +11834,7 @@ insn:
       mnemonic: pop
       operand: [ Ev ]
       constraint: d64
+      semantic: *pop
 
     - opcode: 0x01
       mnemonic: Xop

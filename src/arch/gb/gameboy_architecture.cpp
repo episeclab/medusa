@@ -42,14 +42,64 @@ char const* GameBoyArchitecture::GameBoyCpuInformation::ConvertIdentifierToName(
   }
 }
 
+u32 GameBoyArchitecture::GameBoyCpuInformation::ConvertNameToIdentifier(std::string const& rName) const
+{
+  static std::unordered_map<std::string, u32> s_NameToId;
+  if (s_NameToId.empty())
+  {
+    s_NameToId["a"] = GB_RegA; s_NameToId["f"] = GB_RegF; s_NameToId["af"] = GB_RegAF;
+    s_NameToId["b"] = GB_RegB; s_NameToId["c"] = GB_RegC; s_NameToId["bc"] = GB_RegBC;
+    s_NameToId["d"] = GB_RegD; s_NameToId["e"] = GB_RegE; s_NameToId["de"] = GB_RegDE;
+    s_NameToId["h"] = GB_RegH; s_NameToId["l"] = GB_RegL; s_NameToId["hl"] = GB_RegHL;
+    s_NameToId["pc"] = GB_RegPc; s_NameToId["sp"] = GB_RegSp; s_NameToId["flags"] = GB_RegFl;
+    s_NameToId["cf"] = GB_FlCf; s_NameToId["hl"] = GB_FlHf;
+    s_NameToId["nf"] = GB_FlNf; s_NameToId["zf"] = GB_FlZf;
+  }
+  auto itId = s_NameToId.find(rName);
+  if (itId == std::end(s_NameToId))
+    return 0;
+
+  return itId->second;
+}
+
 u32 GameBoyArchitecture::GameBoyCpuInformation::GetRegisterByType(CpuInformation::Type RegType) const
 {
   switch (RegType)
   {
   default:                     return 0;
   case StackPointerRegister:   return GB_RegSp;
+  case StackFrameRegister:     return 0;
   case ProgramPointerRegister: return GB_RegPc;
   case FlagRegister:           return GB_RegFl;
+  }
+}
+
+u32 GameBoyArchitecture::GameBoyCpuInformation::GetSizeOfRegisterInBit(u32 Id) const
+{
+  switch (Id)
+  {
+  default: return 0;
+
+    /* Register */
+  case GB_RegA: case GB_RegF:
+  case GB_RegB: case GB_RegC:
+  case GB_RegD: case GB_RegE:
+  case GB_RegH: case GB_RegL:
+    return 8;
+  case GB_RegAF: case GB_RegBC:
+  case GB_RegDE: case GB_RegHL:
+    return 16;
+
+    /* Pseudo-register */
+  case GB_RegPc: case GB_RegSp:
+    return 16;
+  case GB_RegFl:
+    return 8;
+
+    /* Flag */
+  case GB_FlCf: case GB_FlHf:
+  case GB_FlNf: case GB_FlZf:
+    return 1;
   }
 }
 
@@ -72,14 +122,6 @@ bool GameBoyArchitecture::Disassemble(BinaryStream const& rBinStrm, TOffset Offs
   else
     Result = (this->*m_OpcodeMap[Opcode])(rBinStrm, Offset, rInsn);
 
-  if (Result == true)
-  {
-    FormatOperand(rInsn.FirstOperand(),  Offset);
-    FormatOperand(rInsn.SecondOperand(), Offset);
-    FormatOperand(rInsn.ThirdOperand(),  Offset);
-    FormatOperand(rInsn.FourthOperand(), Offset);
-  }
-
   return Result;
 }
 
@@ -101,8 +143,9 @@ u16 GameBoyArchitecture::GetRegisterByOpcode(u8 Opcode)
   }
 }
 
-void GameBoyArchitecture::FillConfigurationModel(ConfigurationModel&)
+void GameBoyArchitecture::FillConfigurationModel(ConfigurationModel& rCfgMdl)
 {
+  Architecture::FillConfigurationModel(rCfgMdl);
 }
 
 void GameBoyArchitecture::FormatOperand(Operand& Op, TOffset Offset)
@@ -123,7 +166,10 @@ void GameBoyArchitecture::FormatOperand(Operand& Op, TOffset Offset)
   std::ostringstream oss;
 
   if (Op.Type() & O_MEM)
+  {
+    Op.Type() |= O_MEM8;
     oss << "[";
+  }
 
   if (Op.Type() & O_REG)
   {
@@ -139,10 +185,16 @@ void GameBoyArchitecture::FormatOperand(Operand& Op, TOffset Offset)
   }
 
   if (Op.Type() & O_REL)
+  {
+    Op.Type() |= O_REL16;
     oss << std::hex << "0x" << static_cast<u16>((Offset + Op.Value()) & 0xffff);
+  }
 
   if (Op.Type() & O_ABS)
-    oss << std::hex << "0x" << static_cast<u16>(Op.Value() & 0xfffff);
+  {
+    Op.Type() |= O_ABS16;
+    oss << std::hex << "0x" << static_cast<u16>(Op.Value() & 0xffff);
+  }
 
   if (Op.Type() & O_IMM)
     oss << std::hex << "0x" << Op.GetValue();
@@ -204,12 +256,13 @@ bool GameBoyArchitecture::Insn_Inc(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf);
   rInsn.SetFixedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = FrstOperand.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
     auto pExpr = new OperationExpression(OperationExpression::OpAff,
       pOprdExpr->Clone(),
-      new OperationExpression(OperationExpression::OpAdd, pOprdExpr, new ConstantExpression(0, 1))
+      new OperationExpression(OperationExpression::OpAdd, pOprdExpr, new ConstantExpression(pOprdExpr->GetSizeInBit(), 1))
     );
     rInsn.SetSemantic(pExpr);
   }
@@ -252,12 +305,13 @@ bool GameBoyArchitecture::Insn_Dec(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf);
   rInsn.SetClearedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = FrstOperand.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
     auto pExpr = new OperationExpression(OperationExpression::OpAff,
       pOprdExpr->Clone(),
-      new OperationExpression(OperationExpression::OpSub, pOprdExpr, new ConstantExpression(0, 1))
+      new OperationExpression(OperationExpression::OpSub, pOprdExpr, new ConstantExpression(pOprdExpr->GetSizeInBit(), 1))
     );
     rInsn.SetSemantic(pExpr);
   }
@@ -323,6 +377,8 @@ bool GameBoyArchitecture::Insn_Add(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf | GB_FlCf);
   rInsn.SetClearedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -387,6 +443,8 @@ bool GameBoyArchitecture::Insn_Sub(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf | GB_FlCf);
   rInsn.SetFixedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -452,6 +510,8 @@ bool GameBoyArchitecture::Insn_Adc(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf | GB_FlCf);
   rInsn.SetClearedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -520,6 +580,8 @@ bool GameBoyArchitecture::Insn_Sbc(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf | GB_FlCf);
   rInsn.SetFixedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -597,6 +659,8 @@ bool GameBoyArchitecture::Insn_And(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetClearedFlags(GB_FlNf | GB_FlCf);
   rInsn.SetFixedFlags(GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -662,6 +726,8 @@ bool GameBoyArchitecture::Insn_Or(BinaryStream const& rBinStrm, TOffset Offset, 
   rInsn.SetUpdatedFlags(GB_FlZf);
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf | GB_FlCf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -727,6 +793,8 @@ bool GameBoyArchitecture::Insn_Xor(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlZf);
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf | GB_FlCf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   if (Res == true)
   {
     auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
@@ -760,7 +828,7 @@ bool GameBoyArchitecture::Insn_Bit(BinaryStream const& rBinStrm, TOffset Offset,
   u8 Opcode;
   rBinStrm.Read(Offset, Opcode);
 
-  FrstOp.Type()  = (O_IMM | O_NO_REF);
+  FrstOp.Type()  = (O_IMM8 | O_NO_REF);
   FrstOp.Value() = (Opcode >> 3) & 0x07;
 
   ScdOp.Type() = O_REG;
@@ -771,6 +839,8 @@ bool GameBoyArchitecture::Insn_Bit(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetClearedFlags(GB_FlNf);
   rInsn.SetFixedFlags(GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pOprdExpr = ScdOp.GetSemantic(&m_CpuInfo);
 
   if (pOprdExpr != nullptr)
@@ -784,7 +854,7 @@ bool GameBoyArchitecture::Insn_Bit(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
           OperationExpression::OpLls,
           pOprdExpr,
-          new ConstantExpression(0, FrstOp.GetValue())),
+          new ConstantExpression(ConstantExpression::Const8Bit, FrstOp.GetValue())),
         new ConstantExpression(0, 1)));
     rInsn.SetSemantic(pExpr);
   }
@@ -804,7 +874,7 @@ bool GameBoyArchitecture::Insn_Set(BinaryStream const& rBinStrm, TOffset Offset,
   u8 Opcode;
   rBinStrm.Read(Offset, Opcode);
 
-  FrstOp.Type()  = (O_IMM | O_NO_REF);
+  FrstOp.Type()  = (O_IMM8 | O_NO_REF);
   FrstOp.Value() = (Opcode >> 3) & 0x07;
   ScdOp.Type()   = O_REG;
 
@@ -812,6 +882,8 @@ bool GameBoyArchitecture::Insn_Set(BinaryStream const& rBinStrm, TOffset Offset,
     ScdOp.Type() |= O_MEM;
   ScdOp.Reg() = GetRegisterByOpcode(Opcode);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pOprdExpr = ScdOp.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
@@ -822,7 +894,7 @@ bool GameBoyArchitecture::Insn_Set(BinaryStream const& rBinStrm, TOffset Offset,
       new OperationExpression(
         OperationExpression::OpOr,
         pOprdExpr,
-        new ConstantExpression(0, 1 << FrstOp.GetValue())));
+        new ConstantExpression(ConstantExpression::Const8Bit, 1 << FrstOp.GetValue())));
     rInsn.SetSemantic(pExpr);
   }
 
@@ -841,7 +913,7 @@ bool GameBoyArchitecture::Insn_Res(BinaryStream const& rBinStrm, TOffset Offset,
   u8 Opcode;
   rBinStrm.Read(Offset, Opcode);
 
-  FrstOp.Type()  = (O_IMM | O_NO_REF);
+  FrstOp.Type()  = (O_IMM8 | O_NO_REF);
   FrstOp.Value() = (Opcode >> 3) & 0x07;
   ScdOp.Type()   = O_REG;
 
@@ -849,6 +921,8 @@ bool GameBoyArchitecture::Insn_Res(BinaryStream const& rBinStrm, TOffset Offset,
     ScdOp.Type() |= O_MEM;
   ScdOp.Reg() = GetRegisterByOpcode(Opcode);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pOprdExpr = ScdOp.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
@@ -859,7 +933,7 @@ bool GameBoyArchitecture::Insn_Res(BinaryStream const& rBinStrm, TOffset Offset,
       new OperationExpression(
         OperationExpression::OpAnd,
         pOprdExpr,
-        new ConstantExpression(0, ~(1 << FrstOp.GetValue()))));
+        new ConstantExpression(ConstantExpression::Const8Bit, ~(1 << FrstOp.GetValue()))));
     rInsn.SetSemantic(pExpr);
   }
 
@@ -888,6 +962,8 @@ bool GameBoyArchitecture::Insn_Rl(BinaryStream const& rBinStrm, TOffset Offset, 
 
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
 
   if (pOprdExpr != nullptr)
@@ -901,7 +977,7 @@ bool GameBoyArchitecture::Insn_Rl(BinaryStream const& rBinStrm, TOffset Offset, 
         new OperationExpression(
           OperationExpression::OpLls,
           pOprdExpr,
-          new ConstantExpression(0, 1)),
+          new ConstantExpression(ConstantExpression::Const8Bit, 1)),
         new IdentifierExpression(GB_FlCf, &m_CpuInfo)));
     rInsn.SetSemantic(pExpr);
   }
@@ -931,6 +1007,7 @@ bool GameBoyArchitecture::Insn_Rr(BinaryStream const& rBinStrm, TOffset Offset, 
 
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
 
   if (pOprdExpr != nullptr)
@@ -944,14 +1021,13 @@ bool GameBoyArchitecture::Insn_Rr(BinaryStream const& rBinStrm, TOffset Offset, 
         new OperationExpression(
           OperationExpression::OpLrs,
           pOprdExpr,
-          new ConstantExpression(0, 1)),
+          new ConstantExpression(ConstantExpression::Const8Bit, 1)),
         new OperationExpression(
           OperationExpression::OpLrs,
           new IdentifierExpression(GB_FlCf, &m_CpuInfo),
-          new ConstantExpression(0, 7))));
+          new ConstantExpression(ConstantExpression::Const8Bit, 7))));
     rInsn.SetSemantic(pExpr);
   }
-
 
   return true;
 }
@@ -978,6 +1054,7 @@ bool GameBoyArchitecture::Insn_Rlc(BinaryStream const& rBinStrm, TOffset Offset,
 
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
 
   if (pOprdExpr != nullptr)
@@ -991,8 +1068,8 @@ bool GameBoyArchitecture::Insn_Rlc(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
           OperationExpression::OpAnd,
           pOprdExpr->Clone(),
-          new ConstantExpression(0, 0x80)),
-        new ConstantExpression(0, 7)));
+          new ConstantExpression(ConstantExpression::Const8Bit, 0x80)),
+        new ConstantExpression(ConstantExpression::Const8Bit, 7)));
 
     auto pExprShift = new OperationExpression(
       OperationExpression::OpAff,
@@ -1002,13 +1079,13 @@ bool GameBoyArchitecture::Insn_Rlc(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
           OperationExpression::OpLls,
           pOprdExpr,
-          new ConstantExpression(0, 1)),
+          new ConstantExpression(ConstantExpression::Const8Bit, 1)),
         new IdentifierExpression(GB_FlCf, &m_CpuInfo)));
 
     Expression::List ExprList;
     ExprList.push_back(pExprCarry);
     ExprList.push_back(pExprShift);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1036,6 +1113,7 @@ bool GameBoyArchitecture::Insn_Rrc(BinaryStream const& rBinStrm, TOffset Offset,
 
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
 
   if (pOprdExpr != nullptr)
@@ -1047,7 +1125,7 @@ bool GameBoyArchitecture::Insn_Rrc(BinaryStream const& rBinStrm, TOffset Offset,
       new OperationExpression(
         OperationExpression::OpAnd,
         pOprdExpr->Clone(),
-        new ConstantExpression(0, 1)));
+        new ConstantExpression(ConstantExpression::Const8Bit, 1)));
 
     auto pExprShift = new OperationExpression(
       OperationExpression::OpAff,
@@ -1057,16 +1135,16 @@ bool GameBoyArchitecture::Insn_Rrc(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
           OperationExpression::OpLrs,
           pOprdExpr,
-          new ConstantExpression(0, 1)),
+          new ConstantExpression(ConstantExpression::Const8Bit, 1)),
         new OperationExpression(
           OperationExpression::OpLls,
           new IdentifierExpression(GB_FlCf, &m_CpuInfo),
-          new ConstantExpression(0, 7))));
+          new ConstantExpression(ConstantExpression::Const8Bit, 7))));
 
     Expression::List ExprList;
     ExprList.push_back(pExprCarry);
     ExprList.push_back(pExprShift);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1094,6 +1172,7 @@ bool GameBoyArchitecture::Insn_Sla(BinaryStream const& rBinStrm, TOffset Offset,
 
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
@@ -1105,8 +1184,8 @@ bool GameBoyArchitecture::Insn_Sla(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
           OperationExpression::OpLrs,
           pOprdExpr->Clone(),
-          new ConstantExpression(0, 7)),
-      new ConstantExpression(0, 1)));
+          new ConstantExpression(ConstantExpression::Const8Bit, 7)),
+      new ConstantExpression(ConstantExpression::Const8Bit, 1)));
     auto pShiftExpr = new OperationExpression(
       OperationExpression::OpAff,
       pOprdExpr->Clone(),
@@ -1118,7 +1197,7 @@ bool GameBoyArchitecture::Insn_Sla(BinaryStream const& rBinStrm, TOffset Offset,
     Expression::List ExprList;
     ExprList.push_back(pCarryExpr);
     ExprList.push_back(pShiftExpr);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1146,6 +1225,7 @@ bool GameBoyArchitecture::Insn_Sra(BinaryStream const& rBinStrm, TOffset Offset,
 
   rInsn.SetClearedFlags(GB_FlHf | GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
@@ -1156,7 +1236,7 @@ bool GameBoyArchitecture::Insn_Sra(BinaryStream const& rBinStrm, TOffset Offset,
       new OperationExpression(
         OperationExpression::OpAnd,
         pOprdExpr->Clone(),
-        new ConstantExpression(0, 1)));
+        new ConstantExpression(ConstantExpression::Const8Bit, 1)));
     auto pShiftExpr = new OperationExpression(
       OperationExpression::OpAff,
       pOprdExpr->Clone(),
@@ -1165,16 +1245,16 @@ bool GameBoyArchitecture::Insn_Sra(BinaryStream const& rBinStrm, TOffset Offset,
           new OperationExpression(
             OperationExpression::OpLrs,
             pOprdExpr->Clone(),
-            new ConstantExpression(0, 1)),
+            new ConstantExpression(ConstantExpression::Const8Bit, 1)),
           new OperationExpression(
           OperationExpression::OpAnd,
             pOprdExpr,
-            new ConstantExpression(0, 0x80))));
+            new ConstantExpression(ConstantExpression::Const8Bit, 0x80))));
     
     Expression::List ExprList;
     ExprList.push_back(pCarryExpr);
     ExprList.push_back(pShiftExpr);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1203,6 +1283,7 @@ bool GameBoyArchitecture::Insn_Srl(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.SetUpdatedFlags(GB_FlCf | GB_FlZf);
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
@@ -1226,23 +1307,23 @@ bool GameBoyArchitecture::Insn_Srl(BinaryStream const& rBinStrm, TOffset Offset,
       /* If */
       ConditionExpression::CondEq,
       pOprdExpr,
-      new ConstantExpression(0, 0),
+      new ConstantExpression(pOprdExpr->GetSizeInBit(), 0),
       /* Then */
       new OperationExpression(
         OperationExpression::OpAff,
         new IdentifierExpression(GB_FlZf, &m_CpuInfo),
-        new ConstantExpression(0, 1)),
+        new ConstantExpression(ConstantExpression::Const1Bit, 1)),
       /* Else */
       new OperationExpression(
         OperationExpression::OpAff,
         new IdentifierExpression(GB_FlZf, &m_CpuInfo),
-        new ConstantExpression(0, 0)));
+        new ConstantExpression(ConstantExpression::Const1Bit, 0)));
 
     Expression::List ExprList;
     ExprList.push_back(pExprCf);
     ExprList.push_back(pShiftExpr);
     ExprList.push_back(pExprZf);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1271,6 +1352,7 @@ bool GameBoyArchitecture::Insn_Swap(BinaryStream const& rBinStrm, TOffset Offset
   rInsn.SetUpdatedFlags(GB_FlZf);
   rInsn.SetClearedFlags(GB_FlNf | GB_FlHf | GB_FlCf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   // op = (op >> 4) | (op << 4)
   auto pOprdExpr = Op.GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
@@ -1283,11 +1365,11 @@ bool GameBoyArchitecture::Insn_Swap(BinaryStream const& rBinStrm, TOffset Offset
         new OperationExpression(
           OperationExpression::OpLls,
           pOprdExpr->Clone(),
-          new ConstantExpression(0, 4)),
+          new ConstantExpression(ConstantExpression::Const8Bit, 4)),
         new OperationExpression(
           OperationExpression::OpLrs,
           pOprdExpr,
-          new ConstantExpression(0, 4))));
+          new ConstantExpression(ConstantExpression::Const8Bit, 4))));
     rInsn.SetSemantic(pExpr);
   }
 
@@ -1309,7 +1391,7 @@ bool GameBoyArchitecture::Insn_Cpl(BinaryStream const& rBinStrm, TOffset Offset,
     new OperationExpression(
       OperationExpression::OpXor,
       new IdentifierExpression(GB_RegA, &m_CpuInfo),
-      new ConstantExpression(0, ~0)));
+      new ConstantExpression(ConstantExpression::Const8Bit, ~0)));
   rInsn.SetSemantic(pExpr);
 
   return true;
@@ -1331,7 +1413,7 @@ bool GameBoyArchitecture::Insn_Ccf(BinaryStream const& rBinStrm, TOffset Offset,
     new OperationExpression(
       OperationExpression::OpXor,
       new IdentifierExpression(GB_FlCf, &m_CpuInfo),
-      new ConstantExpression(0, 1)));
+      new ConstantExpression(ConstantExpression::Const1Bit, 1)));
   rInsn.SetSemantic(pExpr);
   return true;
 }
@@ -1394,6 +1476,8 @@ bool GameBoyArchitecture::Insn_Cp(BinaryStream const& rBinStrm, TOffset Offset, 
   rInsn.SetUpdatedFlags(GB_FlZf | GB_FlHf | GB_FlCf);
   rInsn.SetFixedFlags(GB_FlNf);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pFstOprdExpr = FrstOp.GetSemantic(&m_CpuInfo);
   auto pScdOprdExpr = ScdOp.GetSemantic(&m_CpuInfo);
 
@@ -1406,7 +1490,7 @@ bool GameBoyArchitecture::Insn_Cp(BinaryStream const& rBinStrm, TOffset Offset, 
       new OperationExpression(
       OperationExpression::OpAff,
       new IdentifierExpression(GB_FlCf, &m_CpuInfo),
-      new ConstantExpression(0, 1)));
+      new ConstantExpression(ConstantExpression::Const1Bit, 1)));
     rInsn.SetSemantic(pExpr);
   }
 
@@ -1590,6 +1674,8 @@ bool GameBoyArchitecture::Insn_Ld(BinaryStream const& rBinStrm, TOffset Offset, 
   ScdOp.Type()   = O2Type;
   ScdOp.Reg()    = O2Reg;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pLeftOprd  = FstOp.GetSemantic(&m_CpuInfo);
   auto pRightOprd = ScdOp.GetSemantic(&m_CpuInfo);
 
@@ -1638,6 +1724,8 @@ bool GameBoyArchitecture::Insn_Ldi(BinaryStream const& rBinStrm, TOffset Offset,
 
   else return false;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
   auto pRightOprd = dynamic_cast<MemoryExpression *>(ScdOp.GetSemantic(&m_CpuInfo));
 
@@ -1658,12 +1746,12 @@ bool GameBoyArchitecture::Insn_Ldi(BinaryStream const& rBinStrm, TOffset Offset,
         new OperationExpression(
         OperationExpression::OpAdd,
         pRightOprdAddr->Clone(),
-        new ConstantExpression(0, 1)));
+        new ConstantExpression(pRightOprdAddr->GetSizeInBit(), 1)));
 
       Expression::List ExprList;
       ExprList.push_back(pExpr);
       ExprList.push_back(pIncExpr);
-      rInsn.SetSemantic(new BindExpression(ExprList));
+      rInsn.SetSemantic(ExprList);
     }
   }
 
@@ -1703,6 +1791,8 @@ bool GameBoyArchitecture::Insn_Ldd(BinaryStream const& rBinStrm, TOffset Offset,
 
   else return false;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
   auto pRightOprd = ScdOp.GetSemantic(&m_CpuInfo);
   auto pRightOprdAddr = dynamic_cast<MemoryExpression const *>(pRightOprd);
@@ -1717,12 +1807,12 @@ bool GameBoyArchitecture::Insn_Ldd(BinaryStream const& rBinStrm, TOffset Offset,
     auto pIncExpr = new OperationExpression(
       OperationExpression::OpSub,
       pRightOprdAddr->Clone(),
-      new ConstantExpression(0, 1));
+      new ConstantExpression(pRightOprdAddr->GetSizeInBit(), 1));
 
     Expression::List ExprList;
     ExprList.push_back(pExpr);
     ExprList.push_back(pIncExpr);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1778,6 +1868,8 @@ bool GameBoyArchitecture::Insn_Ldh(BinaryStream const& rBinStrm, TOffset Offset,
     break;
   }
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
   auto pLeftOprd  = FrstOp.GetSemantic(&m_CpuInfo);
   auto pRightOprd = ScdOp.GetSemantic(&m_CpuInfo);
 
@@ -1808,6 +1900,9 @@ bool GameBoyArchitecture::Insn_Ldhl(BinaryStream const& rBinStrm, TOffset Offset
   rInsn.ThirdOperand().Type()  = O_IMM8;
   rInsn.ThirdOperand().Value() = Immediate;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+  FormatOperand(rInsn.SecondOperand(), Offset);
+  FormatOperand(rInsn.ThirdOperand(),  Offset);
   auto pLeftOprd  = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
   auto pRightOprd = rInsn.SecondOperand().GetSemantic(&m_CpuInfo);
   auto pImmOprd   = rInsn.ThirdOperand().GetSemantic(&m_CpuInfo);
@@ -1850,6 +1945,7 @@ bool GameBoyArchitecture::Insn_Push(BinaryStream const& rBinStrm, TOffset Offset
   rInsn.FirstOperand().Reg()  = Reg;
   rInsn.FirstOperand().Type() = O_REG;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pExprOprd = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
   if (pExprOprd != nullptr)
   {
@@ -1859,17 +1955,17 @@ bool GameBoyArchitecture::Insn_Push(BinaryStream const& rBinStrm, TOffset Offset
       new OperationExpression(
         OperationExpression::OpSub,
         new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-        new ConstantExpression(0, 2)));
+        new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
     auto pStoreStack = new OperationExpression(
       OperationExpression::OpAff,
-      new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
+      new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
       pExprOprd);
 
     Expression::List ExprList;
     ExprList.push_back(pAllocStack);
     ExprList.push_back(pStoreStack);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1898,13 +1994,14 @@ bool GameBoyArchitecture::Insn_Pop(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.FirstOperand().Reg()  = Reg;
   rInsn.FirstOperand().Type() = O_REG;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
   {
     auto pStoreOprd = new OperationExpression(
       OperationExpression::OpAff,
       pOprdExpr,
-      new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
+      new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
 
     auto pFreeStack = new OperationExpression(
       OperationExpression::OpAff,
@@ -1912,12 +2009,12 @@ bool GameBoyArchitecture::Insn_Pop(BinaryStream const& rBinStrm, TOffset Offset,
       new OperationExpression(
         OperationExpression::OpAdd,
         new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-        new ConstantExpression(0, 2)));
+        new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
     Expression::List ExprList;
     ExprList.push_back(pStoreOprd);
     ExprList.push_back(pFreeStack);
-    rInsn.SetSemantic(new BindExpression(ExprList));
+    rInsn.SetSemantic(ExprList);
   }
 
   return true;
@@ -1950,7 +2047,8 @@ bool GameBoyArchitecture::Insn_Jr(BinaryStream const& rBinStrm, TOffset Offset, 
   default: return false;
   }
 
-  auto pOprdExpr = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
+  FormatOperand(rInsn.FirstOperand(), Offset);
+  auto pOprdExpr = rInsn.FirstOperand().GetSemantic(&m_CpuInfo, static_cast<u8>(rInsn.GetLength()));
   if (pOprdExpr != nullptr)
   {
     Expression *pExpr = new OperationExpression(OperationExpression::OpAff,
@@ -1961,7 +2059,7 @@ bool GameBoyArchitecture::Insn_Jr(BinaryStream const& rBinStrm, TOffset Offset, 
       pExpr = new IfConditionExpression(
         Equal == true ? ConditionExpression::CondEq : ConditionExpression::CondNe,
         new IdentifierExpression(Flags, &m_CpuInfo),
-        new ConstantExpression(0, 1),
+        new ConstantExpression(ConstantExpression::Const1Bit, 1),
         pExpr);
 
     rInsn.SetSemantic(pExpr);
@@ -2008,6 +2106,7 @@ bool GameBoyArchitecture::Insn_Jp(BinaryStream const& rBinStrm, TOffset Offset, 
   default: return false;
   }
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   auto pOprdExpr = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
   if (pOprdExpr)
   {
@@ -2019,7 +2118,7 @@ bool GameBoyArchitecture::Insn_Jp(BinaryStream const& rBinStrm, TOffset Offset, 
       pExpr = new IfConditionExpression(
         Equal == true ? ConditionExpression::CondEq : ConditionExpression::CondNe,
         new IdentifierExpression(Flags, &m_CpuInfo),
-        new ConstantExpression(0, 1),
+        new ConstantExpression(ConstantExpression::Const1Bit, 1),
         pExpr);
 
     rInsn.SetSemantic(pExpr);
@@ -2057,6 +2156,7 @@ bool GameBoyArchitecture::Insn_Call(BinaryStream const& rBinStrm, TOffset Offset
 
   rInsn.SetUpdatedFlags(Flags);
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
   /* CALL → sp -= 2 ; ld (sp), pc + insn_len ; pc = oprd */
   auto pOprdExpr = rInsn.FirstOperand().GetSemantic(&m_CpuInfo);
   if (pOprdExpr != nullptr)
@@ -2067,15 +2167,15 @@ bool GameBoyArchitecture::Insn_Call(BinaryStream const& rBinStrm, TOffset Offset
       new OperationExpression(
         OperationExpression::OpSub,
         new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-        new ConstantExpression(0, 2)));
+        new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
     auto pExprStoreStack = new OperationExpression(
       OperationExpression::OpAff,
-      new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
+      new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
       new OperationExpression(
         OperationExpression::OpAdd,
         new IdentifierExpression(GB_RegPc, &m_CpuInfo),
-        new ConstantExpression(0, rInsn.GetLength())));
+        new ConstantExpression(ConstantExpression::Const16Bit, rInsn.GetLength())));
 
     auto pExprJmp = new OperationExpression(
       OperationExpression::OpAff,
@@ -2092,7 +2192,7 @@ bool GameBoyArchitecture::Insn_Call(BinaryStream const& rBinStrm, TOffset Offset
       pExpr = new IfConditionExpression(
         Equal == true ? ConditionExpression::CondEq : ConditionExpression::CondNe,
         new IdentifierExpression(Flags, &m_CpuInfo),
-        new ConstantExpression(0, 1),
+        new ConstantExpression(ConstantExpression::Const1Bit, 1),
         pExpr);
 
     rInsn.SetSemantic(pExpr);
@@ -2113,33 +2213,34 @@ bool GameBoyArchitecture::Insn_Rst(BinaryStream const& rBinStrm, TOffset Offset,
   rInsn.FirstOperand().Type()  = (O_IMM8 | O_NO_REF);
   rInsn.FirstOperand().Value() = ((Opcode >> 3) & 0x07) * 0x08;
 
+  FormatOperand(rInsn.FirstOperand(),  Offset);
+
     auto pExprAllocStack = new OperationExpression(
       OperationExpression::OpAff,
       new IdentifierExpression(GB_RegSp, &m_CpuInfo),
       new OperationExpression(
         OperationExpression::OpSub,
         new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-        new ConstantExpression(0, 2)));
+        new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
     auto pExprStoreStack = new OperationExpression(
       OperationExpression::OpAff,
-      new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
+      new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)),
       new OperationExpression(
         OperationExpression::OpAdd,
         new IdentifierExpression(GB_RegPc, &m_CpuInfo),
-        new ConstantExpression(0, rInsn.GetLength())));
+        new ConstantExpression(ConstantExpression::Const16Bit, rInsn.GetLength())));
 
     auto pExprJmp = new OperationExpression(
       OperationExpression::OpAff,
       new IdentifierExpression(GB_RegPc, &m_CpuInfo),
-      new ConstantExpression(0, rInsn.FirstOperand().GetValue()));
+      new ConstantExpression(ConstantExpression::Const16Bit, rInsn.FirstOperand().GetValue()));
 
     Expression::List ExprList;
     ExprList.push_back(pExprAllocStack);
     ExprList.push_back(pExprStoreStack);
     ExprList.push_back(pExprJmp);
-    Expression *pExpr = new BindExpression(ExprList);
-    rInsn.SetSemantic(pExpr);
+    rInsn.SetSemantic(ExprList);
 
   return true;
 }
@@ -2169,7 +2270,7 @@ bool GameBoyArchitecture::Insn_Ret(BinaryStream const& rBinStrm, TOffset Offset,
   auto pLoadStack = new OperationExpression(
     OperationExpression::OpAff,
     new IdentifierExpression(GB_RegPc, &m_CpuInfo),
-    new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
+    new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
 
   auto pFreeStack = new OperationExpression(
     OperationExpression::OpAff,
@@ -2177,7 +2278,7 @@ bool GameBoyArchitecture::Insn_Ret(BinaryStream const& rBinStrm, TOffset Offset,
     new OperationExpression(
       OperationExpression::OpAdd,
       new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-      new ConstantExpression(0, 2)));
+      new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
   Expression::List ExprList;
   ExprList.push_back(pLoadStack);
@@ -2188,7 +2289,7 @@ bool GameBoyArchitecture::Insn_Ret(BinaryStream const& rBinStrm, TOffset Offset,
     pExpr = new IfConditionExpression(
     Equal == true ? ConditionExpression::CondEq : ConditionExpression::CondNe,
     new IdentifierExpression(Flags, &m_CpuInfo),
-    new ConstantExpression(0, 1),
+    new ConstantExpression(ConstantExpression::Const1Bit, 1),
     pExpr);
 
   rInsn.SetSemantic(pExpr);
@@ -2206,7 +2307,7 @@ bool GameBoyArchitecture::Insn_Reti(BinaryStream const& rBinStrm, TOffset Offset
   auto pLoadStack = new OperationExpression(
     OperationExpression::OpAff,
     new IdentifierExpression(GB_RegPc, &m_CpuInfo),
-    new MemoryExpression(nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
+    new MemoryExpression(16, nullptr, new IdentifierExpression(GB_RegSp, &m_CpuInfo)));
 
   auto pFreeStack = new OperationExpression(
     OperationExpression::OpAff,
@@ -2214,13 +2315,12 @@ bool GameBoyArchitecture::Insn_Reti(BinaryStream const& rBinStrm, TOffset Offset
     new OperationExpression(
       OperationExpression::OpAdd,
       new IdentifierExpression(GB_RegSp, &m_CpuInfo),
-      new ConstantExpression(0, 2)));
+      new ConstantExpression(ConstantExpression::Const16Bit, 2)));
 
   Expression::List ExprList;
   ExprList.push_back(pLoadStack);
   ExprList.push_back(pFreeStack);
-  Expression *pExpr = new BindExpression(ExprList);
-  rInsn.SetSemantic(pExpr);
+  rInsn.SetSemantic(ExprList);
 
   return true;
 }

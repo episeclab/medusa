@@ -1,18 +1,29 @@
 #!/usr/bin/env python
 
+import ast
 import sys
 import yaml
 import time
+import itertools
 
 def Indent(text, indent = 1):
     if text == None:
         return ''
     res = ''
-    for l in text.split('\n')[0:-1]:
+    strip = False
+    if text[-1] != '\n':
+        text += '\n'
+        strip = True
+    lines = text.split('\n')[:-1]
+    if len(lines) == 0:
+        return '  ' * indent + text
+    for l in lines:
         if l == '':
             res += '\n'
             continue
         res += '  ' * indent + l + '\n'
+    if strip == True and res[-1] == '\n':
+        return res[:-1]
     return res
 
 class ArchConvertion:
@@ -56,6 +67,173 @@ class ArchConvertion:
 
     def _GenerateRead(self, var_name, addr, sz):
         return 'u%d %s;\nrBinStrm.Read(%s, %s);\n\n' % (sz, var_name, addr, var_name)
+
+    def _ConvertSemanticToCode(self, opcd, sem):
+        class SemVisitor(ast.NodeVisitor):
+            def __init__(self):
+                ast.NodeVisitor.__init__(self)
+                self.res = ''
+
+            def generic_visit(self, node):
+                print('generic:', type(node).__name__)
+                assert(0)
+
+            def visit_Module(self, node):
+                for b in node.body:
+                    self.res += self.visit(b)
+
+            def visit_If(self, node):
+                assert(len(node.body) == 1)
+                test_name = self.visit(node.test)
+                body_name = self.visit(node.body[0])
+                return 'new IfConditionExpression(\n%s,\n%s)\n' % (Indent(test_name), Indent(body_name))
+
+            def visit_Compare(self, node):
+                assert(len(node.ops) == 1)
+                assert(len(node.comparators) == 1)
+                oper_name = self.visit(node.ops[0])
+                left_name = self.visit(node.left)
+                comp_name = self.visit(node.comparators[0])
+                return '%s,\n%s,\n%s' % (oper_name, left_name, comp_name)
+
+            def visit_Eq(self, node):
+                return 'ConditionExpression::CondEq'
+
+            def visit_Add(self, node):
+                return 'OperationExpression::OpAdd'
+
+            def visit_Sub(self, node):
+                return 'OperationExpression::OpSub'
+
+            def visit_BitOr(self, node):
+                return 'OperationExpression::OpOr'
+
+            def visit_BitAnd(self, node):
+                return 'OperationExpression::OpAnd'
+
+            def visit_BitXor(self, node):
+                return 'OperationExpression::OpXor'
+
+            def visit_LShift(self, node):
+                return 'OperationExpression::OpLls'
+
+            def visit_RShift(self, node):
+                return 'OperationExpression::OpLrs'
+
+            def visit_BinOp(self, node):
+                oper_name  = self.visit(node.op)
+                left_name  = self.visit(node.left)
+                right_name = self.visit(node.right)
+                return 'new OperationExpression(\n%s,\n%s,\n%s)'\
+                        % (Indent(oper_name), Indent(left_name), Indent(right_name))
+
+            def visit_Call(self, node):
+                func_name = self.visit(node.func)
+                if type(node.func).__name__ == 'Attribute':
+                    return func_name
+                assert(0)
+
+            def visit_Attribute(self, node):
+                attr_name  = node.attr
+                value_name = self.visit(node.value)
+                if attr_name == 'id':
+                    return 'new IdentifierExpression(%s, &m_CpuInfo)' % value_name
+                elif attr_name == 'size':
+                    if value_name == 'rInsn':
+                        get_pc_size_bit = 'm_CpuInfo.GetSizeOfRegisterInBit(m_CpuInfo.GetRegisterByType(CpuInformation::ProgramPointerRegister))'
+                        return 'new ConstantExpression(\n%s,\n%s)'\
+                                % (Indent(get_pc_size_bit), Indent('rInsn.GetLength()'))
+                    else:
+                        get_reg_size_bit = 'm_CpuInfo.GetSizeOfRegisterInBit(%s)' % value_name
+                        return 'new ConstantExpression(\n%s,\n%s / 8)'\
+                                % (Indent(get_reg_size_bit), Indent(get_reg_size_bit))
+                elif attr_name == 'mem':
+                    get_reg_size_bit = 'm_CpuInfo.GetSizeOfRegisterInBit(%s)' % value_name
+                    return 'new MemoryExpression(%s, nullptr, new IdentifierExpression(%s, &m_CpuInfo))' % (get_reg_size_bit, value_name)
+                elif attr_name == 'addr':
+                    return value_name.replace('true', 'false') # XXX: It's a bit hackish..
+                assert(0)
+
+            def visit_Name(self, node):
+                node_name = node.id
+                if node_name.startswith('op'):
+                    return 'rInsn.Operand(%d)->GetSemantic(&m_CpuInfo, static_cast<u8>(rInsn.GetLength()), %s)' % (int(node_name[2:]), 'true')
+                elif '_' in node_name:
+                    return 'new IdentifierExpression(%s, &m_CpuInfo)' % node_name
+                if node_name == 'stack':
+                    return 'm_CpuInfo.GetRegisterByType(CpuInformation::StackPointerRegister)'
+                elif node_name == 'frame':
+                    return 'm_CpuInfo.GetRegisterByType(CpuInformation::StackFrameRegister)'
+                elif node_name == 'program':
+                    return 'm_CpuInfo.GetRegisterByType(CpuInformation::ProgramPointerRegister)'
+                elif node_name == 'insn':
+                    return 'rInsn'
+
+                assert(0)
+
+            def visit_Num(self, node):
+                return 'new ConstantExpression(0, %#x)' % node.n
+
+            def visit_Str(self, node):
+                assert(0)
+
+            def visit_Print(self, node):
+                assert(0)
+
+            def visit_Assign(self, node):
+                assert(len(node.targets) == 1)
+                target_name = self.visit(node.targets[0])
+                value_name  = self.visit(node.value)
+                return 'new OperationExpression(OperationExpression::OpAff,\n%s,\n%s)\n'\
+                        % (Indent(target_name), Indent(value_name))
+
+            def visit_AugAssign(self, node):
+                oper_name   = self.visit(node.op)
+                target_name = self.visit(node.target)
+                value_name  = self.visit(node.value)
+                sub_expr = 'new OperationExpression(\n%s,\n%s,\n%s)'\
+                        % (Indent(oper_name), Indent(target_name), Indent(value_name))
+                return 'new OperationExpression(\n  OperationExpression::OpAff,\n%s,\n%s)\n'\
+                        % (Indent(target_name), Indent(sub_expr))
+
+            def visit_Expr(self, node):
+                return self.visit(node.value)
+
+            def __str__(self):
+                return self.res
+
+        res = ''
+        if sem != None:
+            all_expr = []
+            need_flat = False
+            for x in sem:
+                if type(x) == list:
+                    need_flat = True
+                    break
+            if need_flat:
+                sem = itertools.chain(*sem)
+            for expr in sem:
+                v = SemVisitor()
+                nodes = ast.parse(expr)
+                v.visit(nodes)
+                all_expr.append('/* Semantic: %s */\n' % expr + v.res[:-1] + ';\n')
+            sem_no = 0
+            for expr in all_expr:
+                res += 'auto pExpr%d = %s' % (sem_no, expr)
+                res += 'AllExpr.push_back(pExpr%d);\n' % sem_no
+                sem_no += 1
+        conv_flags = { 'cf':'X86_FlCf', 'pf':'X86_FlPf', 'af':'X86_FlAf', 'zf':'X86_FlZf',
+                'sf':'X86_FlSf', 'tf':'X86_FlTf', 'if':'X86_FlIf', 'df':'X86_FlDf', 'of':'X86_FlOf' }
+        if 'clear_flags' in opcd:
+            res += 'ClearFlags<%s> ClearInsnFlags;\n' % ' | '.join(['%s' % conv_flags[x] for x in opcd['clear_flags']])
+            res += 'ClearInsnFlags(AllExpr, &m_CpuInfo);\n'
+
+        if len(res) == 0:
+            return ''
+
+        var = 'Expression::List AllExpr;\n'
+        res += 'rInsn.SetSemantic(AllExpr);\n'
+        return self._GenerateBrace(var + res)
 
     def GenerateHeader(self):
         pass
@@ -200,11 +378,12 @@ class X86ArchConvertion(ArchConvertion):
     def __X86_GenerateInstructionBody(self, opcd):
         res = ''
         pfx_n = None
+
         if 'constraint' in opcd:
             if opcd['constraint'].startswith('pfx'):
                 pfx_n = int(opcd['constraint'][-1])
-            if opcd['constraint'] == 'd64':
-                res += 'rInsn.Prefix() |= X86_Prefix_REX_w; /* d64 constraint */\n'
+            if opcd['constraint'] == 'd64' or opcd['constraint'] == 'df64':
+                res += self._GenerateCondition('if', '!(rInsn.Prefix() & X86_Prefix_OpSize)', 'rInsn.Prefix() |= X86_Prefix_REX_w; /* d64/df64 constraint */\n')
 
         if 'invalid' in opcd:
             return 'return false; /* INVALID */\n'
@@ -233,15 +412,19 @@ class X86ArchConvertion(ArchConvertion):
         if 'fix_flags' in opcd:
             res += 'rInsn.SetFixedFlags(%s);\n' % ' | '.join(conv_flags[x] for x in opcd['fix_flags'])
 
-
         conv_optype = { 'jmp':'Instruction::OpJump', 'call':'Instruction::OpCall', 'ret':'Instruction::OpRet', 'cond':'Instruction::OpCond' }
         if 'operation_type' in opcd:
             res += 'rInsn.SetOperationType(%s);\n' % ' | '.join(conv_optype[x] for x in opcd['operation_type'])
 
         if 'operand' in opcd:
-            res += 'return %s;\n' % self.__X86_GenerateOperandMethod(opcd['operand'])
-            return res
-
+            res += self._GenerateCondition(
+                    'if',
+                    '%s == false' % self.__X86_GenerateOperandMethod(opcd['operand']),
+                    'return false;\n')
+        if 'semantic' in opcd:
+            res += self._ConvertSemanticToCode(opcd, opcd['semantic'])
+        else:
+            res += self._ConvertSemanticToCode(opcd, None)
         res += 'return true;\n'
         return res
 
@@ -278,9 +461,9 @@ class X86ArchConvertion(ArchConvertion):
 
                 # Prefix
                 elif f == 'rexb':
-                    cond.append('rInsn.GetPrefix() & X86_Prefix_REX_b')
+                    cond.append('(rInsn.GetPrefix() & X86_Prefix_REX_b) == X86_Prefix_REX_b')
                 elif f == 'rexw':
-                    cond.append('rInsn.GetPrefix() & X86_Prefix_REX_w')
+                    cond.append('(rInsn.GetPrefix() & X86_Prefix_REX_w) == X86_Prefix_REX_w')
 
                 # Unknown attr ?
                 #else:
@@ -430,10 +613,14 @@ class X86ArchConvertion(ArchConvertion):
         res = ''
         for oprd in self.all_oprd:
             if oprd == '': continue
-            res += 'bool %sArchitecture::Operand__%s(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn)' % (self.arch['arch_info']['name'].capitalize(), oprd)
+            res += 'bool %sArchitecture::Operand__%s(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn)\n' % (self.arch['arch_info']['name'].capitalize(), oprd)
             dec_op = []
             op_no = 0
             oprd = oprd.split('_')
+
+            seg = ''
+            for i in range(len(oprd)):
+                seg += 'ApplySegmentOverridePrefix(rInsn, rInsn.Operand(%d));\n' % i
 
             # HACK: Handling case with E?_I? is tedious, we have to figure out the size of ModR/M
             # (which can have SIB and/or ImmXX)
@@ -452,6 +639,7 @@ class X86ArchConvertion(ArchConvertion):
                         self.all_dec.add('Decode_%s(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)' % o)
                         op_no += 1
 
+                    ei_hack += seg
                     ei_hack += 'return true;\n'
                     break
 
@@ -463,8 +651,7 @@ class X86ArchConvertion(ArchConvertion):
                 dec_op.append('Decode_%s(rBinStrm, Offset, rInsn, rInsn.Operand(%d))' % (o, op_no))
                 op_no += 1
                 self.all_dec.add('Decode_%s(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)' % o)
-
-            res += self._GenerateBrace('return\n' + Indent(' &&\n'.join(dec_op) + ';\n'))
+            res += self._GenerateBrace('bool Res =\n' + Indent(' &&\n'.join(dec_op) + ';\n') + seg + 'return Res;\n')
         return res
 
 class ArmArchConvertion(ArchConvertion):
@@ -557,7 +744,7 @@ class ArmArchConvertion(ArchConvertion):
                             res_rel = ''
                             res_rel += self._GenerateRead('Imm', 'Offset + ImmField + 8', 32) # Prefetch thing?
                             res_rel += 'rInsn.Operand(%d)->SetValue(Imm);\n' % (oprd_cnt - 1)
-                            res_rel += 'rInsn.Operand(%d)->Type() |= O_REG_PC_REL;\n' % (oprd_cnt - 1)
+                            res_rel += 'rInsn.Operand(%d)->Type() &= ~O_REG_PC_REL; // Since we resolve the PC ref manually, we tell it\'s not relative\n' % (oprd_cnt - 1)
                             res += self._GenerateCondition('if', '(1 << %s) & ARM_RegPC' % var_name, res_rel)
 
                     elif oprd == 'rl_field':

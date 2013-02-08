@@ -66,14 +66,21 @@ void Analyzer::DisassembleFollowingExecutionPath(Database& rDb, Address const& r
           break;
         }
 
-        // LATER: Quick fix
-        if ((*itInsn)->GetOperationType() == Instruction::OpUnknown)
+        for (u8 i = 0; i < OPERAND_NO; ++i)
+        {
+          Address DstAddr;
+          if ((*itInsn)->GetOperandReference(rDb, i, CurAddr, DstAddr))
+            CallStack.push(DstAddr);
+        }
+
+        auto InsnType = (*itInsn)->GetOperationType();
+        if (InsnType == Instruction::OpUnknown || InsnType == Instruction::OpCond)
           CurAddr += (*itInsn)->GetLength();
       }
 
       if (FunctionIsFinished == true) break;
 
-      auto pLastInsn = BasicBlock.back(); // LATER: 'it' not 'p'
+      auto pLastInsn = BasicBlock.back();
       //Log::Write("debug") << "Last insn: " << pLastInsn->ToString() << LogEnd;
 
       switch  (pLastInsn->GetOperationType() & (Instruction::OpCall | Instruction::OpJump | Instruction::OpRet))
@@ -164,7 +171,7 @@ void Analyzer::CreateXRefs(Database& rDb) const
           if (!pInsn->GetOperandReference(rDb, CurOp, CurAddr, DstAddr))
             continue;
 
-          rDb.ChangeValueSize(DstAddr, pInsn->GetOperandReferenceLength(CurOp), true);
+          rDb.ChangeValueSize(DstAddr, pInsn->GetOperandReferenceLength(CurOp), false);
 
           // Check if the destination is valid and is an instruction
           Cell* pDstCell = rDb.RetrieveCell(DstAddr);
@@ -314,7 +321,6 @@ void Analyzer::FindStrings(Database& rDb, Architecture& rArch) const
     if (It->right.GetType() != Label::LabelData)
       continue;
 
-    u8 CurChar;
     std::string CurString        = "";
     MemoryArea const* pMemArea   = rDb.GetMemoryArea(It->left);
     BinaryStream const& rBinStrm = pMemArea->GetBinaryStream();
@@ -326,30 +332,58 @@ void Analyzer::FindStrings(Database& rDb, Architecture& rArch) const
     if (pMemArea->Convert(It->left.GetOffset(), PhysicalOffset) == false)
       continue;
 
-    /* ATM we look only for ASCII strings */
-    AsciiString AsciiStr;
-    u16 StrLen = 0;
+    /* UTF-16 */
+    WinString WinStr;
+    WinString::CharType WinChar;
+    CurString = "";
 
     try
     {
       while (true)
       {
-        rBinStrm.Read(PhysicalOffset, CurChar);
-        if (!AsciiStr.IsValidCharacter(CurChar))
+        rBinStrm.Read(PhysicalOffset, WinChar);
+        if (!WinStr.IsValidCharacter(WinChar))
           break;
-        CurString += CurChar;
-        PhysicalOffset++;
-        StrLen++;
+        CurString += WinStr.ConvertToUf8(WinChar);
+        PhysicalOffset += sizeof(WinChar);
       }
     }
     catch (Exception&) { continue; }
 
-    if (AsciiStr.IsFinalCharacter(CurChar) && !CurString.empty())
+    if (WinStr.IsFinalCharacter(WinChar) && !CurString.empty())
     {
       Log::Write("core") << "Found string: " << CurString << LogEnd;
-      String *pString = new String(CurString);
+      String *pString = new String(String::Utf16Type, CurString);
       rDb.InsertCell(It->left, pString, true, true);
       rDb.SetLabelToAddress(It->left, Label(CurString, m_StringPrefix, Label::LabelString));
+      continue;
+    }
+
+    // LATER: Redo
+    /* ASCII */
+    AsciiString AsciiStr;
+    AsciiString::CharType AsciiChar;
+
+    try
+    {
+      while (true)
+      {
+        rBinStrm.Read(PhysicalOffset, AsciiChar);
+        if (!AsciiStr.IsValidCharacter(AsciiChar))
+          break;
+        CurString += AsciiStr.ConvertToUf8(AsciiChar);
+        PhysicalOffset += sizeof(AsciiChar);
+      }
+    }
+    catch (Exception&) { continue; }
+
+    if (AsciiStr.IsFinalCharacter(AsciiChar) && !CurString.empty())
+    {
+      Log::Write("core") << "Found string: " << CurString << LogEnd;
+      String *pString = new String(String::AsciiType, CurString);
+      rDb.InsertCell(It->left, pString, true, true);
+      rDb.SetLabelToAddress(It->left, Label(CurString, m_StringPrefix, Label::LabelString));
+      return;
     }
   }
 }
@@ -462,7 +496,7 @@ bool Analyzer::DisassembleBasicBlock(Database const& rDb, Architecture& rArch, A
 {
   Address CurAddr = rAddr;
   MemoryArea const* pMemArea = rDb.GetMemoryArea(CurAddr);
-  bool Res = false;
+  bool Res = rArch.DisassembleBasicBlockOnly() == false ? true : false;
 
   if (pMemArea == NULL)
     goto exit;
@@ -480,13 +514,6 @@ bool Analyzer::DisassembleBasicBlock(Database const& rDb, Architecture& rArch, A
 
     if (rDb.RetrieveCell(CurAddr) == NULL)
       goto exit;
-
-    // We try to retrieve the current instruction, if it's true we go to the next function
-    if (rDb.ContainsCode(CurAddr))
-    {
-      Res = true;
-      goto exit;
-    }
 
     // We create a new entry and disassemble it
     Instruction* pInsn = new Instruction;
@@ -510,6 +537,14 @@ bool Analyzer::DisassembleBasicBlock(Database const& rDb, Architecture& rArch, A
       delete pInsn;
       goto exit;
     }
+
+    // We try to retrieve the current instruction, if it's true we go to the next function
+    for (auto InsnLen = 0; InsnLen < pInsn->GetLength(); ++InsnLen)
+      if (rDb.ContainsCode(CurAddr + InsnLen))
+      {
+        Res = true;
+        goto exit;
+      }
 
     rBasicBlock.push_back(pInsn);
 

@@ -1,4 +1,5 @@
-#include "x86_architecture.hpp"
+﻿#include "x86_architecture.hpp"
+#include <medusa/extend.hpp>
 
 template<u64 Imm> struct OperandImm8
 {
@@ -106,15 +107,33 @@ template<typename ConstType, u32 OpType> struct OperandRead
   }
 };
 
-struct OperandJb : public OperandRead<u8,  O_REL8> {};
-struct OperandJw : public OperandRead<u16, O_REL16>{};
-struct OperandJd : public OperandRead<u32, O_REL32>{};
+template<typename ConstType, u32 OpType, unsigned Pos> struct OperandReadSignExtend
+{
+  bool operator()(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)
+  {
+    ConstType ct;
+
+    rBinStrm.Read(Offset, ct);
+    pOprd->SetValue(SignExtend<ConstType, Pos>(ct));
+    pOprd->SetType(OpType);
+    pOprd->SetOffset(static_cast<u8>(rInsn.GetLength()));
+    rInsn.Length() += sizeof(ct);
+    return true;
+  }
+};
+
+struct OperandJb  : public OperandReadSignExtend<u8,  O_REL64,  8>{};
+struct OperandJw  : public OperandReadSignExtend<u16, O_REL64, 16>{};
+struct OperandJd  : public OperandReadSignExtend<u32, O_REL64, 32>{};
+struct OperandJqs : public OperandReadSignExtend<u32, O_REL64, 32>{};
+
 struct OperandJv
 {
   bool operator()(BinaryStream const& rBinStrm, X86_Bit Bit, TOffset Offset, Instruction& rInsn, Operand* pOprd)
   {
-    OperandJw OpJw;
-    OperandJd OpJd;
+    OperandJw  OpJw;
+    OperandJd  OpJd;
+    OperandJqs OpJqs;
 
     switch (Bit)
     {
@@ -123,9 +142,12 @@ struct OperandJv
       else                                       return OpJw(rBinStrm, Offset, rInsn, pOprd);
 
     case X86_Bit_32:
-    case X86_Bit_64:
       if (rInsn.GetPrefix() & X86_Prefix_OpSize) return OpJw(rBinStrm, Offset, rInsn, pOprd);
       else                                       return OpJd(rBinStrm, Offset, rInsn, pOprd);
+
+    case X86_Bit_64:
+      if (rInsn.GetPrefix() & X86_Prefix_OpSize) return OpJw(rBinStrm, Offset, rInsn, pOprd);
+      else                                       return OpJqs(rBinStrm, Offset, rInsn, pOprd);
 
     default:                                     return false;
     }
@@ -135,6 +157,26 @@ struct OperandJv
 struct OperandOw : public OperandRead<u16, O_DISP16>{};
 struct OperandOd : public OperandRead<u32, O_DISP32>{};
 struct OperandOq : public OperandRead<u64, O_DISP64>{};
+struct OperandOb // Not sure for this one...
+{
+  bool operator()(BinaryStream const& rBinStrm, X86_Bit Bit, TOffset Offset, Instruction& rInsn, Operand* pOprd)
+  {
+    OperandOw OpOw;
+    OperandOd OpOd;
+    OperandOq OpOq;
+
+    switch (Bit)
+    {
+    case X86_Bit_16: if (!OpOw(rBinStrm, Offset, rInsn, pOprd)) return false; break;
+    case X86_Bit_32: if (!OpOd(rBinStrm, Offset, rInsn, pOprd)) return false; break;
+    case X86_Bit_64: if (!OpOq(rBinStrm, Offset, rInsn, pOprd)) return false; break;
+    default:         return false;
+    }
+
+    pOprd->Type() |= O_MEM8;
+    return true;
+  }
+};
 struct OperandOv
 {
   bool operator()(BinaryStream const& rBinStrm, X86_Bit Bit, TOffset Offset, Instruction& rInsn, Operand* pOprd)
@@ -179,8 +221,8 @@ struct OperandOv
   }
 };
 
-struct OperandIb : public OperandRead<u8,  O_IMM8 >{};
-struct OperandIw : public OperandRead<u16, O_IMM16>{};
+struct OperandIb : public OperandRead<u8,  O_IMM8  | O_NO_REF>{};
+struct OperandIw : public OperandRead<u16, O_IMM16 | O_NO_REF>{};
 struct OperandId : public OperandRead<u32, O_IMM32>{};
 struct OperandIq : public OperandRead<u64, O_IMM64>{};
 struct OperandIv
@@ -245,8 +287,10 @@ template<typename OffType, u32 OpType> struct OperandLogicAddr
   }
 };
 
-struct OperandLogicAddr16 : public OperandLogicAddr<u16, O_MEM16>{};
-struct OperandLogicAddr32 : public OperandLogicAddr<u32, O_MEM32>{};
+struct OperandLogicAddr16 : public OperandLogicAddr<u16, O_MEM16 | O_DISP16>{};
+struct OperandLogicAddr32 : public OperandLogicAddr<u32, O_MEM32 | O_DISP32>{};
+
+template<u32 OpType> struct OperandIbs : public OperandReadSignExtend<s8, OpType, 8>{};
 
 static x86::ModRM GetModRm(BinaryStream const& rBinStrm, TOffset Offset)
 {
@@ -420,6 +464,22 @@ bool X86Architecture::Decode_Ib(BinaryStream const& rBinStrm, TOffset Offset, In
   return OpIb(rBinStrm, Offset, rInsn, pOprd);
 }
 
+bool X86Architecture::Decode_Ibs(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)
+{
+  OperandIbs<O_IMM16> OpIbsw;
+  OperandIbs<O_IMM32> OpIbsd;
+  OperandIbs<O_IMM64> OpIbsq;
+
+  auto const rFirstOprd = rInsn.FirstOperand();
+  switch (rFirstOprd.GetLength())
+  {
+  case 2: return OpIbsw(rBinStrm, Offset, rInsn, pOprd);
+  case 4: return OpIbsd(rBinStrm, Offset, rInsn, pOprd);
+  case 8: return OpIbsq(rBinStrm, Offset, rInsn, pOprd);
+  default:return Decode_Ib(rBinStrm, Offset, rInsn, pOprd);
+  }
+}
+
 bool X86Architecture::Decode_Iv(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)
 {
   OperandIv OpIv;
@@ -448,6 +508,12 @@ bool X86Architecture::Decode_Jz(BinaryStream const& rBinStrm, TOffset Offset, In
 {
   OperandJv OpJv;
   return OpJv(rBinStrm, static_cast<X86_Bit>(m_Cfg.Get("Bit")), Offset, rInsn, pOprd);
+}
+
+bool X86Architecture::Decode_Ob(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)
+{
+  OperandOb OpOb;
+  return OpOb(rBinStrm, static_cast<X86_Bit>(m_Cfg.Get("Bit")), Offset, rInsn, pOprd);
 }
 
 bool X86Architecture::Decode_Ov(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, Operand* pOprd)

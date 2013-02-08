@@ -2,15 +2,62 @@
 
 MEDUSA_NAMESPACE_BEGIN
 
-Instruction::~Instruction(void)
+Instruction::Instruction(Instruction const& rInsn)
 {
-  delete m_pRootExpr;
+  *this = rInsn;
 }
 
-void Instruction::SetSemantic(Expression *pExpr)
+Instruction& Instruction::operator=(Instruction const& rInsn)
 {
-  delete m_pRootExpr;
-  m_pRootExpr = pExpr;
+  if (this != &rInsn)
+  {
+    m_OperationType = m_OperationType;
+    m_pName         = m_pName;
+    for (u8 i = 0; i < OPERAND_NO; ++i)
+      m_Oprd[i]     = m_Oprd[i];
+    m_Opcd          = m_Opcd;
+    m_Length        = m_Length;
+    m_Prefix        = m_Prefix;
+    m_TestedFlags   = m_TestedFlags;
+    m_UpdatedFlags  = m_UpdatedFlags;
+    m_ClearedFlags  = m_ClearedFlags;
+    m_FixedFlags    = m_FixedFlags;
+
+    for (auto itExpr = std::begin(m_Expressions); itExpr != std::end(m_Expressions); ++itExpr)
+      delete *itExpr;
+    m_Expressions.erase(std::begin(m_Expressions), std::end(m_Expressions));
+    for (auto itExpr = std::begin(rInsn.m_Expressions); itExpr != std::end(rInsn.m_Expressions); ++itExpr)
+      m_Expressions.push_back((*itExpr)->Clone());
+  }
+  return *this;
+}
+
+Instruction::~Instruction(void)
+{
+  for (auto itExpr = std::begin(m_Expressions); itExpr != std::end(m_Expressions); ++itExpr)
+    delete *itExpr;
+  m_Expressions.erase(std::begin(m_Expressions), std::end(m_Expressions));
+}
+
+void Instruction::SetSemantic(Expression::List const& rExprList)
+{
+  for (auto itExpr = std::begin(m_Expressions); itExpr != std::end(m_Expressions); ++itExpr)
+    delete *itExpr;
+  m_Expressions.erase(std::begin(m_Expressions), std::end(m_Expressions));
+  m_Expressions = rExprList;
+}
+
+void Instruction::SetSemantic(Expression* pExpr)
+{
+  for (auto itExpr = std::begin(m_Expressions); itExpr != std::end(m_Expressions); ++itExpr)
+    delete *itExpr;
+  m_Expressions.erase(std::begin(m_Expressions), std::end(m_Expressions));
+  m_Expressions.push_back(pExpr);
+}
+
+void Instruction::AddSemantic(Expression* pExpr)
+{
+  m_Expressions.push_back(pExpr);
 }
 
 u8 Instruction::GetOperandOffset(u8 Oprd) const
@@ -34,7 +81,7 @@ bool Instruction::GetOperandReference(Database const& rDatabase, u8 Oprd, Addres
   if (pOprd->GetType() & O_NO_REF)
     return false;
 
-  if ((pOprd->GetType() & O_REL) || ((pOprd->GetType() & O_REG_PC_REL) && !(pOprd->GetType() & O_MEM)))
+  if ((pOprd->GetType() & O_REL) || ((pOprd->GetType() & O_REG_PC_REL) && (pOprd->GetType() & O_MEM)))
   {
     switch (pOprd->GetType() & DS_MASK)
     {
@@ -49,45 +96,6 @@ bool Instruction::GetOperandReference(Database const& rDatabase, u8 Oprd, Addres
     return true;
   }
 
-  //else if ((pOprd->GetType() & O_MEM))
-  //{
-  //  if (pOprd->GetType() & O_REG_PC_REL)
-  //    Offset += rAddrSrc.GetOffset();
-
-  //  switch (pOprd->GetType() & DS_MASK)
-  //  {
-  //    case DS_8BIT:   Offset += static_cast<s8> (pOprd->GetValue()) + GetLength(); break;
-  //    case DS_16BIT:  Offset += static_cast<s16>(pOprd->GetValue()) + GetLength(); break;
-  //    case DS_32BIT:  Offset += static_cast<s32>(pOprd->GetValue()) + GetLength(); break;
-  //    case DS_64BIT:  Offset += static_cast<s64>(pOprd->GetValue()) + GetLength(); break;
-  //    default:        Offset += pOprd->GetValue() + GetLength();
-  //  }
-
-  //  rAddrDst.SetOffset(Offset);
-  //  TOffset RawOffset;
-  //  MemoryArea const* pMemArea = rDatabase.GetMemoryArea(rAddrDst);
-  //  if (!pMemArea->Convert(Offset, RawOffset)) return false;
-
-  //  BinaryStream const& rBinStrm = pMemArea->GetBinaryStream();
-
-  //  u64 ReadOffset = 0x0;
-  //  try
-  //  {
-  //    switch (pOprd->GetType() & MS_MASK)
-  //    {
-  //    case MS_8BIT:  rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xff;       break;
-  //    case MS_16BIT: rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xffff;     break;
-  //    case MS_32BIT: rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xffffffff; break;
-  //    case MS_64BIT: rBinStrm.Read(RawOffset, ReadOffset);                           break;
-  //    default: return false;
-  //    }
-  //  }
-  //  catch(Exception&) { return false; }
-
-  //  rAddrDst.SetOffset(ReadOffset);
-  //  return true;
-  //}
-
   else if ((pOprd->GetType() & O_ABS) || (pOprd->GetType() & O_IMM) || (pOprd->GetType() & O_DISP))
   {
     switch (pOprd->GetType() & DS_MASK)
@@ -99,6 +107,46 @@ bool Instruction::GetOperandReference(Database const& rDatabase, u8 Oprd, Addres
       default:        rAddrDst.SetOffset(pOprd->GetValue());
     }
 
+    return true;
+  }
+
+  else if ((pOprd->GetType() & O_MEM))
+  {
+    if (pOprd->GetType() & O_REG_PC_REL)
+      Offset += rAddrSrc.GetOffset();
+
+    switch (pOprd->GetType() & DS_MASK)
+    {
+      case DS_8BIT:   Offset += static_cast<s8> (pOprd->GetValue()) + GetLength(); break;
+      case DS_16BIT:  Offset += static_cast<s16>(pOprd->GetValue()) + GetLength(); break;
+      case DS_32BIT:  Offset += static_cast<s32>(pOprd->GetValue()) + GetLength(); break;
+      case DS_64BIT:  Offset += static_cast<s64>(pOprd->GetValue()) + GetLength(); break;
+      default:        Offset += pOprd->GetValue() + GetLength();
+    }
+
+    rAddrDst.SetOffset(Offset);
+    TOffset RawOffset;
+    MemoryArea const* pMemArea = rDatabase.GetMemoryArea(rAddrDst);
+    if (pMemArea == nullptr)                   return false;
+    if (!pMemArea->Convert(Offset, RawOffset)) return false;
+
+    BinaryStream const& rBinStrm = pMemArea->GetBinaryStream();
+
+    u64 ReadOffset = 0x0;
+    try
+    {
+      switch (pOprd->GetType() & MS_MASK)
+      {
+      case MS_8BIT:  rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xff;       break;
+      case MS_16BIT: rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xffff;     break;
+      case MS_32BIT: rBinStrm.Read(RawOffset, ReadOffset); ReadOffset &= 0xffffffff; break;
+      case MS_64BIT: rBinStrm.Read(RawOffset, ReadOffset);                           break;
+      default: return false;
+      }
+    }
+    catch(Exception&) { return false; }
+
+    rAddrDst.SetOffset(ReadOffset);
     return true;
   }
 

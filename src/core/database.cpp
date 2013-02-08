@@ -52,7 +52,7 @@ void Database::SetLabelToAddress(Address const& rAddr, Label const& rLabel)
 {
   TLabelMap::left_iterator Iter = m_LabelMap.left.find(rAddr);
   m_LabelMap.left.replace_data(Iter, rLabel);
-  m_EventQueue.Push(EventHandler::LabelAdded(rLabel));
+  m_EventQueue.Push(EventHandler::LabelUpdated(rLabel, EventHandler::LabelUpdated::Add));
 }
 
 Address Database::GetAddressFromLabelName(std::string const& rLabelName) const
@@ -70,17 +70,19 @@ void Database::AddLabel(Address const& rAddr, Label const& rLabel)
   m_LabelMap.insert(TLabelMap::value_type(rAddr, rLabel));
   m_View.AddLineInformation(View::LineInformation(View::LineInformation::EmptyLineType, rAddr));
   m_View.AddLineInformation(View::LineInformation(View::LineInformation::LabelLineType, rAddr));
-  m_EventQueue.Push(EventHandler::LabelAdded(rLabel));
+  m_EventQueue.Push(EventHandler::LabelUpdated(rLabel, EventHandler::LabelUpdated::Add));
 }
 
 bool Database::ChangeValueSize(Address const& rValueAddr, u8 NewValueSize, bool Force)
 {
   Cell* pOldCell = RetrieveCell(rValueAddr);
 
-  NewValueSize /= 8;
+  if (pOldCell == nullptr) return false;
 
-  if (pOldCell == NULL)
+  if (pOldCell->GetType() == CellData::InstructionType && Force == false)
     return false;
+
+  NewValueSize /= 8;
 
   size_t OldCellLength = pOldCell->GetLength();
   if (pOldCell->GetType() == CellData::ValueType && OldCellLength == NewValueSize)
@@ -112,7 +114,7 @@ bool Database::ChangeValueSize(Address const& rValueAddr, u8 NewValueSize, bool 
   return true;
 }
 
-bool Database::MakeString(Address const& rAddr)
+bool Database::MakeAsciiString(Address const& rAddr)
 {
   try
   {
@@ -136,7 +138,7 @@ bool Database::MakeString(Address const& rAddr)
 
     if (StrData.length() == 0) return false;
 
-    auto pStr = new String(StrData);
+    auto pStr = new String(String::AsciiType, StrData);
     InsertCell(rAddr, pStr, true);
   }
   catch (Exception const&)
@@ -146,6 +148,48 @@ bool Database::MakeString(Address const& rAddr)
 
   return true;
 }
+
+bool Database::MakeWindowsString(Address const& rAddr)
+{
+  try
+  {
+    TOffset StrStartOff, StrOff;
+    std::string StrData = "";
+    auto pMemArea       = GetMemoryArea(rAddr);
+    auto rCurBinStrm    = pMemArea->GetBinaryStream();
+    WinString WinStr;
+    WinString::CharType CurChar;
+
+    if (pMemArea->Convert(rAddr.GetOffset(), StrOff) == false)
+      return false;
+
+    StrStartOff = StrOff;
+
+    bool EndReached = false;
+    do
+    {
+      rCurBinStrm.Read(StrOff, CurChar);
+      if (WinStr.IsFinalCharacter(CurChar)) EndReached = true;
+
+      if (EndReached == false)
+        StrData += WinStr.ConvertToUf8(CurChar);
+      StrOff += sizeof(CurChar);
+    } while (EndReached == false);
+
+    if (StrData.length() == 0) return false;
+
+    auto pStr = new String(String::Utf16Type, StrData, static_cast<u16>(StrOff - StrStartOff));
+    InsertCell(rAddr, pStr, true);
+  }
+  catch (Exception const&)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+
 
 Cell* Database::RetrieveCell(Address const& rAddr)
 {
@@ -181,12 +225,23 @@ bool Database::InsertCell(Address const& rAddr, Cell* pCell, bool Force, bool Sa
     if (RetrieveCell(*itAddr) == nullptr)
     {
       m_View.EraseLineInformation(View::LineInformation(View::LineInformation::CellLineType, *itAddr));
-      //Log::Write("view") << "Remove " << itAddr->ToString() << LogEnd;
+
+      Address DstAddr;
+      if (GetXRefs().To(*itAddr, DstAddr))
+        GetXRefs().RemoveRef(*itAddr);
+
+      Address::List ListAddr;
+      GetXRefs().From(*itAddr, ListAddr);
+      if (ListAddr.size() != 0)
+      {
+        auto Label = GetLabelFromAddress(*itAddr);
+        if (Label.GetType() != Label::LabelUnknown)
+          m_EventQueue.Push(EventHandler::LabelUpdated(Label, EventHandler::LabelUpdated::Remove));
+      }
     }
     else
     {
       m_View.AddLineInformation(View::LineInformation(View::LineInformation::CellLineType, *itAddr));
-      //Log::Write("view") << "Add " << itAddr->ToString() << LogEnd;
     }
 
   m_EventQueue.Push(EventHandler::DatabaseUpdated());

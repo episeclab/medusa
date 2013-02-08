@@ -1,7 +1,7 @@
 #include "x86.hpp"
 #include "x86_architecture.hpp"
 
-void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const& rDb, TOffset Offset, Instruction& rInsn, Operand* pOprd)
+void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const& rDb, TOffset Offset, Instruction& rInsn, Operand* pOprd) const
 {
   std::ostringstream ValueName;
   ValueName << std::setfill('0') << std::right << std::hex;
@@ -9,7 +9,7 @@ void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const
 
   if (pOprd->GetType() & O_REG_PC_REL)
   {
-    Label OprdLabel = rDb.GetLabelFromAddress(Address(Address::FlatType, pOprd->GetSegValue(), pOprd->GetValue() + Offset));
+    Label OprdLabel = rDb.GetLabelFromAddress(Address(Address::FlatType, pOprd->GetSegValue(), rInsn.GetLength() + pOprd->GetValue() + Offset));
     if (OprdLabel.GetType() != Label::LabelUnknown)
     {
       ValueName << "[" << OprdLabel.GetLabel() << "]";
@@ -104,14 +104,15 @@ void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const
 
     if (pOprd->GetType() & O_SEG)
     {
-      rInsnBuf << X86_RegName[pOprd->GetSeg()] << ":";
-      rInsn.AddMark(Cell::Mark::RegisterType, strlen(X86_RegName[pOprd->GetSeg()]));
+      auto pRegName = m_CpuInfo.ConvertIdentifierToName(pOprd->GetSeg());
+      rInsnBuf << pRegName << ":";
+      rInsn.AddMark(Cell::Mark::RegisterType, strlen(pRegName));
       rInsn.AddMark(Cell::Mark::OperatorType, 1);
     }
 
     if (pOprd->GetType() & O_SEG_VAL)
     {
-      rInsnBuf << pOprd->GetSeg() << ":";
+      rInsnBuf << std::setfill('0') << std::setw(4) << std::hex << pOprd->GetSeg() << ":";
       rInsn.AddMark(Cell::Mark::ImmediateType, 4);
       rInsn.AddMark(Cell::Mark::OperatorType, 1);
     }
@@ -121,8 +122,9 @@ void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const
 
     if (pOprd->GetType() & O_REG && pOprd->GetReg() != X86_Reg_Unknown)
     {
-      rInsnBuf << X86_RegName[pOprd->GetReg()];
-      rInsn.AddMark(Cell::Mark::RegisterType, strlen(X86_RegName[pOprd->GetReg()]));
+      auto pRegName = m_CpuInfo.ConvertIdentifierToName(pOprd->GetReg());
+      rInsnBuf << pRegName;
+      rInsn.AddMark(Cell::Mark::RegisterType, strlen(pRegName));
     }
 
     if (pOprd->GetType() & O_SREG && pOprd->GetSecReg() != X86_Reg_Unknown)
@@ -133,8 +135,9 @@ void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const
         rInsn.AddMark(Cell::Mark::OperatorType, 3);
       }
 
-      rInsnBuf << X86_RegName[pOprd->GetSecReg()];
-      rInsn.AddMark(Cell::Mark::RegisterType, strlen(X86_RegName[pOprd->GetSecReg()]));
+      auto pRegName = m_CpuInfo.ConvertIdentifierToName(pOprd->GetSecReg());
+      rInsnBuf << pRegName;
+      rInsn.AddMark(Cell::Mark::RegisterType, strlen(pRegName));
     }
 
     if (pOprd->GetType() & O_SCALE && pOprd->GetSecReg() != X86_Reg_Unknown)
@@ -198,7 +201,8 @@ void X86Architecture::FormatOperand(std::ostringstream &rInsnBuf, Database const
 
   if (pOprd->GetType() & O_REG)
   {
-    rInsnBuf << X86_RegName[pOprd->GetReg()];
-    rInsn.AddMark(Cell::Mark::RegisterType, strlen(X86_RegName[pOprd->GetReg()]));
+    auto pRegName = m_CpuInfo.ConvertIdentifierToName(pOprd->GetReg());
+    rInsnBuf << pRegName;
+    rInsn.AddMark(Cell::Mark::RegisterType, strlen(pRegName));
   }
 }

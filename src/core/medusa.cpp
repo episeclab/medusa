@@ -59,8 +59,18 @@ void Medusa::Close(void)
   m_Loaders.erase(std::begin(m_Loaders), std::end(m_Loaders));
   m_AvailableArchitectures.erase(std::begin(m_AvailableArchitectures), std::end(m_AvailableArchitectures));
   m_UsedArchitectures.erase(std::begin(m_UsedArchitectures), std::end(m_UsedArchitectures));
+  m_CompatibleOperatingSystems.erase(std::begin(m_CompatibleOperatingSystems), std::end(m_CompatibleOperatingSystems));
   m_DefaultArchitectureTag = MEDUSA_ARCH_UNK;
   m_ArchIdPool = 0;
+}
+
+OperatingSystem::VectorSharedPtr Medusa::GetCompatibleOperatingSystems(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch) const
+{
+  OperatingSystem::VectorSharedPtr CompatOs;
+  for (auto itOs = std::begin(m_CompatibleOperatingSystems); itOs != std::end(m_CompatibleOperatingSystems); ++itOs)
+    if ((*itOs)->IsSupported(*spLdr, *spArch) == true)
+      CompatOs.push_back(*itOs);
+  return CompatOs;
 }
 
 void Medusa::LoadModules(std::wstring const& rModulesPath)
@@ -85,11 +95,11 @@ void Medusa::LoadModules(std::wstring const& rModulesPath)
       Log::Write("core") << "Module: \"" << rFilename << "\" ";
 
       void* pMod = Module.Load(FullPath);
-      if (pMod == NULL)
+      if (pMod == nullptr)
         continue;
 
       TGetLoader pGetLoader = Module.Load<TGetLoader>(pMod, "GetLoader");
-      if (pGetLoader != NULL)
+      if (pGetLoader != nullptr)
       {
         Log::Write("core") << "is a loader ";
 
@@ -109,13 +119,34 @@ void Medusa::LoadModules(std::wstring const& rModulesPath)
       }
 
       TGetArchitecture pGetArchitecture = Module.Load<TGetArchitecture>(pMod, "GetArchitecture");
-      if (pGetArchitecture != NULL)
+      if (pGetArchitecture != nullptr)
       {
         Log::Write("core") << "is an Architecture" << LogEnd;
 
         Architecture* pArchitecture = pGetArchitecture();
         Architecture::SharedPtr ArchitecturePtr(pArchitecture);
         m_AvailableArchitectures.push_back(ArchitecturePtr);
+        continue;
+      }
+
+      TGetOperatingSystem pGetOperatingSystem = Module.Load<TGetOperatingSystem>(pMod, "GetOperatingSystem");
+      if (pGetOperatingSystem != nullptr)
+      {
+        Log::Write("core") << "is an operating system" << LogEnd;
+
+        OperatingSystem* pOperatingSystem = pGetOperatingSystem(m_Database);
+        OperatingSystem::SharedPtr spOperatingSystem(pOperatingSystem);
+        m_CompatibleOperatingSystems.push_back(spOperatingSystem);
+        continue;
+      }
+
+      TGetEmulator pGetEmulator = Module.Load<TGetEmulator>(pMod, "GetEmulator");
+      if (pGetEmulator != nullptr)
+      {
+        Log::Write("core") << "is an Emulator" << LogEnd;
+
+        Emulator* pEmulator = pGetEmulator(nullptr, nullptr, nullptr);
+        m_Emulators[pEmulator->GetName()] = pGetEmulator;
         continue;
       }
 
@@ -148,12 +179,17 @@ void Medusa::DisassembleAsync(Architecture::SharedPtr spArch, Address const& rAd
   boost::thread DisasmThread(&Medusa::Disassemble, this, spArch, rAddr);
 }
 
-void Medusa::Start(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch)
+void Medusa::ConfigureEndianness(Architecture::SharedPtr spArch)
 {
   /* Configure endianness of memory area */
   m_FileBinStrm.SetEndianness(spArch->GetEndianness());
   for (Database::TIterator It = m_Database.Begin(); It != m_Database.End(); ++It)
     (*It)->SetEndianness(m_FileBinStrm.GetEndianness());
+}
+
+void Medusa::Start(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch)
+{
+  ConfigureEndianness(spArch);
 
   /* Add start label */
   m_Database.AddLabel(spLdr->GetEntryPoint(), Label("start", Label::LabelCode));
@@ -258,6 +294,7 @@ Cell const* Medusa::GetCell(Address const& rAddr) const
   auto spArch = GetArchitecture(pCell->GetArchitectureTag());
   if (!spArch) return nullptr;
 
+  spArch->FormatCell(m_Database, m_FileBinStrm, rAddr, const_cast<Cell&>(*pCell)); /* LATER: Do smth better */
   return pCell;
 }
 
@@ -281,6 +318,7 @@ MultiCell const* Medusa::GetMultiCell(Address const& rAddr) const
   auto spArch = GetArchitecture(m_DefaultArchitectureTag);
   if (!spArch) return nullptr;
 
+  spArch->FormatMultiCell(m_Database, m_FileBinStrm, rAddr, const_cast<MultiCell&>(*pMultiCell));
   return pMultiCell;
 }
 

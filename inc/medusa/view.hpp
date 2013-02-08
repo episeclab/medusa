@@ -6,7 +6,8 @@
 #include "medusa/types.hpp"
 #include "medusa/address.hpp"
 
-#include <vector>
+#include <map>
+#include <set>
 #include <boost/thread/mutex.hpp>
 
 MEDUSA_NAMESPACE_BEGIN
@@ -25,10 +26,9 @@ public:
       LabelLineType,
       XrefLineType,
       MemoryAreaLineType,
-      EmptyLineType
+      EmptyLineType,
+      AnyLineType
     };
-
-    typedef std::vector<LineInformation> Vector;
 
     LineInformation(Type Type = UnknownLineType, Address const& rAddr = Address())
       : m_Type(Type)
@@ -50,6 +50,12 @@ public:
     Type GetType(void) const { return m_Type; }
     Address const& GetAddress(void) const { return m_Address; }
 
+    void Update(LineInformation const& rLineInfo)
+    {
+      m_Type    = rLineInfo.m_Type;
+      m_Address = rLineInfo.m_Address;
+    }
+
   private:
     Type     m_Type;
     Address  m_Address;
@@ -65,9 +71,12 @@ public:
   void EraseAll(void);
 
 private:
-  LineInformation::Vector m_LinesInformation;
-  typedef boost::mutex MutexType;
-  mutable MutexType m_EventMutex;
+  typedef boost::mutex    MutexType;
+  typedef std::set<LineInformation> Set;
+
+  size_t                  m_MaximumLineLength;
+  mutable MutexType       m_EventMutex;
+  Set                     m_Set;
 };
 
 MEDUSA_NAMESPACE_END

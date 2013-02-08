@@ -7,6 +7,8 @@
 #include "medusa/export.hpp"
 #include "medusa/architecture.hpp"
 #include "medusa/loader.hpp"
+#include "medusa/os.hpp"
+#include "medusa/emulation.hpp"
 #include "medusa/database.hpp"
 #include "medusa/analyzer.hpp"
 
@@ -27,6 +29,8 @@ MEDUSA_NAMESPACE_BEGIN
 class Medusa_EXPORT Medusa
 {
 public:
+  typedef std::map<std::string, TGetEmulator> EmulatorMap;
+
                                   Medusa(void);
                                   Medusa(std::wstring const& rFilePath);
                                  ~Medusa(void);
@@ -49,12 +53,18 @@ public:
   Architecture::VectorSharedPtr const& GetAvailableArchitectures(void) const { return m_AvailableArchitectures; }
                                   //! This method returns available loaders. @see Loader
   Loader::VectorSharedPtr const&  GetSupportedLoaders(void) const { return m_Loaders; }
+                                  //! This method returns compatible operating system. @see OperatingSystem
+  OperatingSystem::VectorSharedPtr GetCompatibleOperatingSystems(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch) const;
+                                  //! This method returns available emulators. @see Emulator
+  EmulatorMap const&              GetEmulators(void) const { return m_Emulators; }
                                   //! This methods loads all modules.
   void                            LoadModules(std::wstring const& rModulesPath);
 
   bool                            RegisterArchitecture(Architecture::SharedPtr spArch);
 
   bool                            UnregisterArchitecture(Architecture::SharedPtr spArch);
+
+  void                            ConfigureEndianness(Architecture::SharedPtr spArch);
 
   void                            Start(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch);
   void                            StartAsync(Loader::SharedPtr spLdr, Architecture::SharedPtr spArch);
@@ -102,10 +112,12 @@ private:
   Architecture::TagMap            m_UsedArchitectures;
   Tag                             m_DefaultArchitectureTag;
   Loader::VectorSharedPtr         m_Loaders;
+  OperatingSystem::VectorSharedPtr m_CompatibleOperatingSystems;
   Analyzer                        m_Analyzer; /* don't shorten this word :) */
   u32                             m_ArchIdPool;
   typedef boost::mutex            MutexType;
   mutable MutexType               m_Mutex;
+  EmulatorMap                     m_Emulators;
 };
 
 MEDUSA_NAMESPACE_END

@@ -43,6 +43,12 @@ void DisassemblyView::clear(void)
   _visibleLines.clear();
 }
 
+bool DisassemblyView::goTo(medusa::Address const& address)
+{
+  medusa::View::LineInformation lineInfo(medusa::View::LineInformation::CellLineType, address);
+  return goTo(lineInfo);
+}
+
 bool DisassemblyView::goTo(medusa::View::LineInformation const & lineInfo)
 {
   int line;
@@ -371,7 +377,9 @@ void DisassemblyView::paintEvent(QPaintEvent * evt)
       }
 
     case LineInformation::EmptyLineType: _visibleLines.push_back(""); continue;
-    default: break;
+    default:
+      assert(0);
+      break;
     }
 
     if (visibleLine.isEmpty())

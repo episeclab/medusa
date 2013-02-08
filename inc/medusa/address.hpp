@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <list>
 #include <boost/shared_ptr.hpp>
+#include <functional>
 
 MEDUSA_NAMESPACE_BEGIN
 
@@ -217,7 +218,7 @@ public:
       return false;
   }
 
-  //! This method returns true if both base and offset are inferior to rAddr.
+  //! This method returns true if both base and offset are inferior or equal to rAddr.
   bool operator<=(Address const& rAddr) const
   {
     if (m_Base < rAddr.m_Base)
@@ -239,6 +240,17 @@ public:
       return false;
   }
 
+  //! This method returns true if both base and offset are superior or equal to rAddr.
+  bool operator>=(Address const& rAddr) const
+  {
+    if (m_Base > rAddr.m_Base)
+      return true;
+    else if (m_Base == rAddr.m_Base)
+      return m_Offset >= rAddr.m_Offset;
+    else
+      return false;
+  }
+
 protected:
   void SanitizeOffset(void) { SanitizeOffset(m_Offset); }
 
@@ -251,6 +263,20 @@ private:
 };
 
 MEDUSA_NAMESPACE_END
+
+namespace std
+{
+  template<> class hash<medusa::Address>
+  {
+  public:
+    size_t operator()(medusa::Address const& rAddr) const
+    {
+      auto Hash_u16 = std::hash<medusa::u16>();
+      auto Hash_u64 = std::hash<medusa::u64>();
+      return Hash_u16(rAddr.GetBase()) ^ Hash_u64(rAddr.GetOffset());
+    }
+  };
+}
 
 Medusa_EXPORT std::ostream& operator<<(std::ostream& rOstrm, medusa::Address const& rAddr);
 Medusa_EXPORT std::wostream& operator<<(std::wostream& rOstrm, medusa::Address const& rAddr);

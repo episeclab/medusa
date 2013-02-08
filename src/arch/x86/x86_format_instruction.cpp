@@ -1,7 +1,7 @@
 #include "x86.hpp"
 #include "x86_architecture.hpp"
 
-void X86Architecture::FormatInstruction(Database const& rDatabase, BinaryStream const& rBinStrm, Address const& rAddr, Instruction& rInsn)
+void X86Architecture::FormatInstruction(Database const& rDatabase, BinaryStream const& rBinStrm, Address const& rAddr, Instruction& rInsn) const
 {
   char Sep = '\0';
   std::ostringstream oss;
@@ -47,55 +47,67 @@ void X86Architecture::FormatInstruction(Database const& rDatabase, BinaryStream 
 
     Sep = ',';
   }
+
+  auto rExpr = rInsn.GetSemantic();
+  if (rExpr.empty() == false)
+  {
+    auto BegMark = oss.str().length();
+    oss << " [ ";
+    auto itExpr = std::begin(rExpr);
+    oss << (*itExpr)->ToString();
+    ++itExpr;
+    std::for_each(itExpr, std::end(rExpr), [&oss](Expression const* pExpr)
+    {
+      oss << "; " << pExpr->ToString();
+    });
+    oss << " ]";
+    rInsn.AddMark(Cell::Mark::KeywordType, oss.str().length() - BegMark);
+  }
+
   rInsn.UpdateString(oss.str());
 }
 
-void X86Architecture::ApplySegmentOverridePrefix(Instruction &rInsn)
+void X86Architecture::ApplySegmentOverridePrefix(Instruction& rInsn, Operand* pOprd)
 {
-  for (int i = 0; i < OPERAND_NO; i++)
+  if (rInsn.GetPrefix() && pOprd->GetType() & O_MEM)
   {
-    Operand *pOprd = rInsn.Operand(i);
+    // For instructions with two memory operands (cmps/movs),
+    // the segment override is only applied on the source operand (i == 1).
+    if (rInsn.Opcode() == X86_Opcode_Cmps || rInsn.Opcode() == X86_Opcode_Movs)
+      return;
 
-    if (rInsn.GetPrefix() && pOprd->GetType() & O_MEM)
+    // TODO: What do we do for multiple segment override prefix?
+    // Intel Vol2A 2.1.1: For each instruction, it is only useful to include
+    // up to one prefix code from each of the four groups (Groups 1, 2, 3, 4).
+    if (rInsn.GetPrefix() & X86_Prefix_CS || rInsn.GetPrefix() & X86_Prefix_HintNotTaken)
     {
-      // For instructions with two memory operands (cmps/movs),
-      // the segment override is only applied on the source operand (i == 1).
-      if ((rInsn.Opcode() == X86_Opcode_Cmps || rInsn.Opcode() == X86_Opcode_Movs) && !i)
-        continue;
-
-      // TODO: What do we do for multiple segment override prefix?
-      // Intel Vol2A 2.1.1: For each instruction, it is only useful to include
-      // up to one prefix code from each of the four groups (Groups 1, 2, 3, 4).
-      if (rInsn.GetPrefix() & X86_Prefix_CS || rInsn.GetPrefix() & X86_Prefix_HintNotTaken)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Cs;
-      }
-      else if (rInsn.GetPrefix() & X86_Prefix_DS || rInsn.GetPrefix() & X86_Prefix_HintTaken)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Ds;
-      }
-      else if (rInsn.GetPrefix() & X86_Prefix_ES)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Es;
-      }
-      else if (rInsn.GetPrefix() & X86_Prefix_FS || rInsn.GetPrefix() & X86_Prefix_HintAltTaken)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Fs;
-      }
-      else if (rInsn.GetPrefix() & X86_Prefix_GS)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Gs;
-      }
-      else if (rInsn.GetPrefix() & X86_Prefix_SS)
-      {
-        pOprd->Type() |= O_SEG;
-        pOprd->Seg() = X86_Reg_Ss;
-      }
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Cs;
+    }
+    else if (rInsn.GetPrefix() & X86_Prefix_DS || rInsn.GetPrefix() & X86_Prefix_HintTaken)
+    {
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Ds;
+    }
+    else if (rInsn.GetPrefix() & X86_Prefix_ES)
+    {
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Es;
+    }
+    else if (rInsn.GetPrefix() & X86_Prefix_FS || rInsn.GetPrefix() & X86_Prefix_HintAltTaken)
+    {
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Fs;
+    }
+    else if (rInsn.GetPrefix() & X86_Prefix_GS)
+    {
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Gs;
+    }
+    else if (rInsn.GetPrefix() & X86_Prefix_SS)
+    {
+      pOprd->Type() |= O_SEG;
+      pOprd->Seg() = X86_Reg_Ss;
     }
   }
 }
